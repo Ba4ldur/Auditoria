@@ -1,0 +1,137 @@
+@import 'tailwindcss';
+
+/**
+ * Attivare Auditor — design tokens.
+ *
+ * Navy is the institutional colour and carries the chrome (sidebar, headers,
+ * report covers). Gold is an accent used sparingly, for emphasis and for the
+ * conformity indicators. Work areas stay on a light canvas so dense fiscal
+ * tables remain readable for long sessions.
+ */
+@theme {
+  --color-navy-950: #071120;
+  --color-navy-900: #0a1a2f;
+  --color-navy-800: #10263f;
+  --color-navy-700: #16324f;
+  --color-navy-600: #1f4468;
+  --color-navy-500: #2c5b87;
+  --color-navy-400: #4a7cab;
+  --color-navy-300: #7ba3c9;
+  --color-navy-200: #b6cee2;
+  --color-navy-100: #dde8f2;
+  --color-navy-50: #f0f5fa;
+
+  --color-gold-700: #8a6a22;
+  --color-gold-600: #a8842f;
+  --color-gold-500: #c6a052;
+  --color-gold-400: #d9bc79;
+  --color-gold-300: #e8d5a6;
+  --color-gold-100: #f6eed9;
+
+  --color-canvas: #f2f5f9;
+  --color-surface: #ffffff;
+  --color-line: #dfe6ef;
+  --color-line-strong: #c6d2e0;
+
+  --color-ink: #0d2038;
+  --color-ink-muted: #566a83;
+  --color-ink-subtle: #8093a8;
+
+  --color-success: #0d7a54;
+  --color-success-soft: #e3f4ed;
+  --color-warning: #a8700f;
+  --color-warning-soft: #fdf1dc;
+  --color-danger: #a81f28;
+  --color-danger-soft: #fbe8e9;
+  --color-info: #1f4468;
+  --color-info-soft: #e6eef6;
+
+  --font-sans:
+    ui-sans-serif, -apple-system, 'Segoe UI', 'Inter', 'Helvetica Neue', Arial, 'Noto Sans',
+    sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', 'Roboto Mono', 'Courier New', monospace;
+
+  --radius-card: 0.625rem;
+
+  --shadow-card: 0 1px 2px rgb(13 32 56 / 0.06), 0 1px 3px rgb(13 32 56 / 0.04);
+  --shadow-raised: 0 4px 12px rgb(13 32 56 / 0.1), 0 1px 3px rgb(13 32 56 / 0.06);
+  --shadow-panel: -12px 0 32px rgb(13 32 56 / 0.14);
+}
+
+@layer base {
+  * {
+    border-color: var(--color-line);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 0.875rem;
+    line-height: 1.5;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'tnum';
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    letter-spacing: -0.011em;
+    font-weight: 600;
+  }
+
+  /** Monetary and quantity columns align on the decimal separator. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-navy-500);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+
+  ::selection {
+    background: var(--color-navy-200);
+  }
+}
+
+@layer components {
+  .app-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line-strong) transparent;
+  }
+
+  .app-scroll::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  .app-scroll::-webkit-scrollbar-thumb {
+    background-color: var(--color-line-strong);
+    border-radius: 999px;
+    border: 3px solid transparent;
+    background-clip: content-box;
+  }
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  body {
+    background: #ffffff;
+    font-size: 11pt;
+  }
+
+  .print-page {
+    box-shadow: none !important;
+    border: none !important;
+  }
+}

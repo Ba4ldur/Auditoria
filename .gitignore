@@ -1,0 +1,19 @@
+node_modules/
+.next/
+out/
+build/
+coverage/
+*.tsbuildinfo
+next-env.d.ts.bak
+
+.env
+.env.local
+.env*.local
+
+.data/
+.DS_Store
+*.log
+npm-debug.log*
+
+# Gerado pelo `next typegen` / `next build`
+tsconfig.tsbuildinfo

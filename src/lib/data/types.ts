@@ -18,11 +18,18 @@ import type {
   AuditFile,
   AuditFinding,
   AuditStatus,
+  CfopRule,
+  CfopRuleSource,
+  CfopTreatment,
   Company,
   CompanyRegimeHistory,
   ConformityBand,
+  FieldConfirmation,
+  FileInspection,
   FileMessage,
+  FileParseLog,
   FileProcessingStatus,
+  FileReliability,
   FileStats,
   IdentityCheck,
   Organization,
@@ -87,9 +94,13 @@ export interface AuditFilePatch {
   readonly detectedStartDate?: string | null;
   readonly detectedEndDate?: string | null;
   readonly identityCheck?: IdentityCheck;
+  readonly reliability?: FileReliability;
   readonly status?: FileProcessingStatus;
   readonly messages?: readonly FileMessage[];
   readonly stats?: FileStats | null;
+  readonly parserVersion?: string | null;
+  readonly parseLog?: FileParseLog | null;
+  readonly inspection?: FileInspection | null;
   readonly processedAt?: string | null;
 }
 
@@ -123,6 +134,25 @@ export interface ReviewPatch {
   readonly reviewStatus: ReviewStatus;
   readonly reviewNote: string | null;
   readonly reviewer: string | null;
+}
+
+export interface FieldConfirmationInput {
+  readonly auditId: string;
+  readonly fileId: string;
+  readonly field: string;
+  readonly originalValue: string | null;
+  readonly confirmedValue: string;
+  readonly confirmedBy: string;
+  readonly note: string | null;
+}
+
+export interface CfopRuleInput {
+  readonly cfop: string;
+  readonly description: string | null;
+  readonly treatment: CfopTreatment;
+  readonly reason: string | null;
+  readonly ruleSource?: CfopRuleSource;
+  readonly updatedBy: string | null;
 }
 
 export interface RuleSettingInput {
@@ -180,4 +210,12 @@ export interface DataStore {
 
   listRuleSettings(): Promise<RuleSetting[]>;
   upsertRuleSetting(input: RuleSettingInput): Promise<RuleSetting>;
+
+  listFieldConfirmations(auditId: string): Promise<FieldConfirmation[]>;
+  upsertFieldConfirmation(input: FieldConfirmationInput): Promise<FieldConfirmation>;
+  deleteFieldConfirmation(id: string): Promise<void>;
+
+  listCfopRules(): Promise<CfopRule[]>;
+  upsertCfopRule(input: CfopRuleInput): Promise<CfopRule>;
+  deleteCfopRule(cfop: string): Promise<void>;
 }

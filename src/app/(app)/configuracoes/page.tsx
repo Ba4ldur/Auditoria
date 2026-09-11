@@ -5,8 +5,9 @@ import { formatIsoDateTime } from '@/lib/core/dates';
 import { ACCEPTED_EXTENSIONS } from '@/lib/pipeline/upload';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { LinkButton } from '@/components/ui/button';
 import { Notice, PageHeader } from '@/components/ui/page';
-import { RevenuePolicyForm, ScoreWeightsForm } from './settings-forms';
+import { ScoreWeightsForm } from './settings-forms';
 import { SeedDemoButton } from '@/components/domain/seed-demo-button';
 
 export const metadata: Metadata = { title: 'Configurações' };
@@ -48,16 +49,20 @@ export default async function SettingsPage() {
 
         <Card>
           <CardHeader
-            title="Composição do faturamento"
-            description="Define quais CFOPs são excluidos do somatório dos documentos fiscais nas regras de faturamento."
+            title="Política de Receita"
+            description="Define, por CFOP, quais operações compõem a receita apurada pelos documentos fiscais."
           />
           <CardBody className="flex flex-col gap-4">
             <Notice tone="info">
-              O sistema não decide sozinho quais operações integram a receita bruta. Por padrão nenhum CFOP e
-              excluido, e o valor comparado sempre apresenta a composição utilizada. Ajuste esta lista conforme
-              a análise do profissional responsável.
+              O sistema não decide sozinho quais operações integram a receita bruta. CFOP sem classificação
+              fica em <strong>revisão</strong>: o documento aparece com o valor, separado do faturamento
+              considerado, até que a decisão seja registrada.
             </Notice>
-            <RevenuePolicyForm exclusions={settings.revenueCfopExclusions} />
+            <div>
+              <LinkButton href="/configuracoes/politica-receita" variant="secondary">
+                Abrir Política de Receita
+              </LinkButton>
+            </div>
           </CardBody>
         </Card>
 

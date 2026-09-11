@@ -23,7 +23,7 @@ import { DEFAULT_SCORE_WEIGHTS } from '@/lib/domain/entities';
 import type { AuditDataset } from '@/lib/normalization/dataset';
 import { AUDIT_RULES } from './rules';
 import { computeScore, type ScoreResult } from './score';
-import { DEFAULT_REVENUE_POLICY, type RevenuePolicy } from './revenue';
+import { EMPTY_REVENUE_POLICY, type RevenuePolicy } from './revenue-composition';
 import type { AuditRule, RuleConfig, RuleFinding, RuleTolerance } from './types';
 
 export interface EngineOptions {
@@ -67,7 +67,7 @@ export function runAudit(dataset: AuditDataset, options: EngineOptions): EngineR
   const rules = options.rules ?? AUDIT_RULES;
   const weights = options.scoreWeights ?? DEFAULT_SCORE_WEIGHTS;
   const timestamp = (options.now ?? (() => new Date().toISOString()))();
-  const revenuePolicy = options.revenuePolicy ?? DEFAULT_REVENUE_POLICY;
+  const revenuePolicy = options.revenuePolicy ?? EMPTY_REVENUE_POLICY;
 
   const findings: AuditFinding[] = [];
   let cruzamentosCorretos = 0;
@@ -93,7 +93,16 @@ export function runAudit(dataset: AuditDataset, options: EngineOptions): EngineR
               'A regra não pode ser concluída por um erro de execução. As demais regras da auditoria foram ' +
               'processadas normalmente.',
             evidencias: [
-              { label: 'Erro', origin: 'Motor de auditoria', value: describeError(error), source: null, fileName: null, reference: null },
+              {
+                label: 'Erro',
+                origin: 'Motor de auditoria',
+                value: describeError(error),
+                source: null,
+                fileName: null,
+                recordCode: null,
+                lineNumber: null,
+                reference: null,
+              },
             ],
           },
           rule,

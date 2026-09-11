@@ -4,7 +4,12 @@ import { getStore } from '@/lib/data';
 import { formatCnpj } from '@/lib/core/cnpj';
 import { formatCompetencia } from '@/lib/core/competencia';
 import { formatIsoDateTime } from '@/lib/core/dates';
-import { FILE_STATUS_LABELS, type FileProcessingStatus } from '@/lib/domain/entities';
+import {
+  FILE_STATUS_LABELS,
+  RELIABILITY_LABELS,
+  type FileProcessingStatus,
+  type FileReliability,
+} from '@/lib/domain/entities';
 import { DATA_SOURCE_DEFINITIONS, DATA_SOURCES, sourceShortLabel } from '@/lib/domain/sources';
 import { LinkButton } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
@@ -14,6 +19,14 @@ import { EmptyRow, TableWrapper, Td, Th, Tr } from '@/components/ui/table';
 
 export const metadata: Metadata = { title: 'Importações' };
 export const dynamic = 'force-dynamic';
+
+const RELIABILITY_TONES: Record<FileReliability, 'success' | 'warning' | 'danger' | 'muted'> = {
+  VALIDADO: 'success',
+  VALIDADO_COM_ALERTAS: 'warning',
+  REQUER_CONFERENCIA: 'warning',
+  INCOMPATIVEL: 'danger',
+  ERRO: 'danger',
+};
 
 const STATUS_TONES: Record<FileProcessingStatus, 'muted' | 'info' | 'success' | 'warning' | 'danger'> = {
   PENDENTE: 'muted',
@@ -45,7 +58,7 @@ export default async function ImportsPage() {
       <PageHeader
         eyebrow="Arquivos"
         title="Importações"
-        description="Todos os arquivos recebidos pelo sistema, com o tipo identificado automaticamente, o CNPJ encontrado e o status de processamento."
+        description="Todos os arquivos recebidos pelo sistema. Abra qualquer arquivo para conferir a leitura registro a registro antes de usá-lo na auditoria."
       />
 
       <Card className="mb-4">
@@ -81,20 +94,21 @@ export default async function ImportsPage() {
               <Th>Empresa / Competência</Th>
               <Th>Tipo</Th>
               <Th>CNPJ no arquivo</Th>
+              <Th>Confiabilidade</Th>
               <Th>Status</Th>
               <Th>Enviado em</Th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
-              <EmptyRow colSpan={6}>
+              <EmptyRow colSpan={7}>
                 Nenhum arquivo importado ainda. Crie uma auditoria e envie os arquivos da competência.
               </EmptyRow>
             ) : (
               rows.map(({ file, audit }) => (
                 <Tr key={file.id}>
                   <Td className="max-w-xs">
-                    <Link href={`/api/arquivos/${file.id}`} className="break-all text-navy-700 hover:underline">
+                    <Link href={`/arquivos/${file.id}`} className="break-all text-navy-700 hover:underline">
                       {file.originalName}
                     </Link>
                   </Td>
@@ -118,6 +132,11 @@ export default async function ImportsPage() {
                         Incompatível
                       </Badge>
                     ) : null}
+                  </Td>
+                  <Td>
+                    <Badge tone={RELIABILITY_TONES[file.reliability]}>
+                      {RELIABILITY_LABELS[file.reliability]}
+                    </Badge>
                   </Td>
                   <Td>
                     <Badge tone={STATUS_TONES[file.status]}>{FILE_STATUS_LABELS[file.status]}</Badge>

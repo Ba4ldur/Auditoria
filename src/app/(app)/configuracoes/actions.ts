@@ -39,37 +39,3 @@ export async function saveScoreWeightsAction(
   revalidatePath('/configuracoes');
   return { error: null, success: 'Pesos do score atualizados. Reprocesse as auditorias para aplicar.' };
 }
-
-export async function saveRevenuePolicyAction(
-  _previous: FormState,
-  formData: FormData,
-): Promise<FormState> {
-  await requireUser();
-
-  const values = submittedValues(formData, ['cfopExclusions']);
-  const raw = String(formData.get('cfopExclusions') ?? '');
-  const codes = raw
-    .split(/[\s,;]+/)
-    .map((code) => code.trim())
-    .filter((code) => code !== '');
-
-  const invalid = codes.filter((code) => !/^\d{4}$/.test(code));
-  if (invalid.length > 0) {
-    return {
-      error: `CFOP inválido: ${invalid.join(', ')}. Informe códigos de 4 dígitos.`,
-      values,
-    };
-  }
-
-  try {
-    await getStore().saveSettings({ revenueCfopExclusions: [...new Set(codes)].sort() });
-  } catch (error) {
-    return { error: describeError(error), values };
-  }
-
-  revalidatePath('/configuracoes');
-  return {
-    error: null,
-    success: 'Política de composição da receita atualizada. Reprocesse as auditorias para aplicar.',
-  };
-}

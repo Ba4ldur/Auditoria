@@ -115,6 +115,7 @@ export interface EfdIcmsAdjustment {
 
 /** Register E110 — ICMS apuration totals. */
 export interface EfdIcmsApuration {
+  readonly line: number;
   readonly dtIni: string | null;
   readonly dtFin: string | null;
   readonly vlTotDebitos: Cents;
@@ -140,6 +141,7 @@ export interface EfdIcmsApurationAdjustment {
 }
 
 export interface EfdIcmsParticipant {
+  readonly line: number;
   readonly codPart: string;
   readonly nome: string | null;
   readonly codPais: string | null;
@@ -270,6 +272,7 @@ const handlers: RegisterHandler<EfdIcmsState>[] = [
       const codPart = field(record, 2); // COD_PART
       if (!codPart) return;
       state.participants.set(codPart, {
+        line: record.line,
         codPart,
         nome: field(record, 3), // NOME
         codPais: field(record, 4), // COD_PAIS
@@ -431,6 +434,7 @@ const handlers: RegisterHandler<EfdIcmsState>[] = [
     description: 'Apuração do ICMS - operações próprias',
     handle(record, state) {
       state.apurations.push({
+        line: record.line,
         dtIni: state.currentPeriod?.dtIni ?? state.startDate,
         dtFin: state.currentPeriod?.dtFin ?? state.endDate,
         vlTotDebitos: money(record, 2), // VL_TOT_DEBITOS

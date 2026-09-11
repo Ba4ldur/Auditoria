@@ -1,98 +1,183 @@
 /**
- * Rules ATT-FAT-*: revenue reconciliation across obligations.
+ * Regras ATT-FAT-*: conciliação de faturamento entre obrigações.
  *
- * Every figure compared here is accompanied by the sentence describing how it
- * was obtained, because a revenue difference is only auditable when the auditor
- * can see what was summed (requirement 21).
+ * Duas garantias desta fase estão implementadas aqui:
  *
- * None of these rules concludes that a difference is an error: operations that
- * do not compose revenue, different measurement bases between obligations and
- * regime-specific treatments are legitimate causes of divergence.
+ * 1. **Composição explícita.** O faturamento nunca é "a soma das saídas": cada
+ *    documento é classificado pela Política de Receita e o resultado mostra o
+ *    que entrou, o que saiu e o que aguarda classificação.
+ * 2. **Sem conclusão sem base.** Se houver documento pendente de classificação,
+ *    ou se a receita do PGDAS-D não tiver sido identificada ou confirmada, a
+ *    regra devolve NÃO VERIFICADO com o motivo — jamais uma divergência
+ *    calculada sobre dados incompletos.
  */
 
 import { formatBRL, sumCents, type Cents } from '@/lib/core/money';
 import { formatCompetencia } from '@/lib/core/competencia';
 import type { DataSourceKind } from '@/lib/domain/sources';
+import type { RecordOrigin } from '@/lib/domain/model';
 import type { AuditDataset } from '@/lib/normalization/dataset';
 import { invoicesFrom, xmlInvoices } from '@/lib/normalization/dataset';
-import { computeRevenueFromInvoices, type RevenueComputation, type RevenuePolicy } from '../revenue';
+import { composeRevenue, type RevenueComposition, type RevenuePolicy } from '../revenue-composition';
 import { compareValues } from '../tolerance';
 import { DEFAULT_TOLERANCE, type AuditRule, type RuleContext, type RuleResult } from '../types';
 import { evidence, isEffective, moneyEvidence } from './helpers';
+
+export type RevenueSourceKey = 'XML' | 'EFD_ICMS_IPI' | 'EFD_CONTRIBUICOES' | 'PGDAS_D';
 
 export interface RevenueFigure {
   readonly amount: Cents;
   readonly description: string;
   readonly source: DataSourceKind;
-  readonly fileName: string | null;
+  readonly origin: RecordOrigin | null;
   readonly documentCount: number | null;
+  /** Presente quando o valor vem de documentos classificados um a um. */
+  readonly composition: RevenueComposition | null;
 }
 
-/** Revenue derived from the documents of a given source. */
-function revenueFromDocuments(
+/** Motivo pelo qual um faturamento não pôde ser apurado. */
+export interface RevenueUnavailable {
+  readonly label: string;
+  readonly reason: string;
+}
+
+export type RevenueOutcome =
+  | { readonly ok: true; readonly figure: RevenueFigure }
+  | { readonly ok: false; readonly unavailable: RevenueUnavailable };
+
+const SOURCE_LABELS: Readonly<Record<RevenueSourceKey, string>> = {
+  XML: 'Faturamento pelos documentos fiscais (XML)',
+  EFD_ICMS_IPI: 'Faturamento pela EFD ICMS/IPI',
+  EFD_CONTRIBUICOES: 'Receita apurada na EFD-Contribuições',
+  PGDAS_D: 'Receita bruta declarada no PGDAS-D',
+};
+
+export function revenueLabel(key: RevenueSourceKey): string {
+  return SOURCE_LABELS[key];
+}
+
+/** Compõe a receita a partir dos documentos de uma origem. */
+export function revenueFromDocuments(
   dataset: AuditDataset,
-  source: 'XML' | 'EFD_ICMS_IPI' | 'EFD_CONTRIBUICOES',
+  key: Exclude<RevenueSourceKey, 'PGDAS_D'>,
   policy: RevenuePolicy,
-): RevenueFigure | null {
-  if (source === 'XML') {
-    const invoices = xmlInvoices(dataset).filter(isEffective);
-    if (invoices.length === 0) return null;
-    const computation = computeRevenueFromInvoices(invoices, policy, 'documentos XML');
-    return toFigure(computation, 'XML_NFE', invoices[0]?.fileName ?? null);
+): RevenueOutcome {
+  const invoices =
+    key === 'XML'
+      ? xmlInvoices(dataset).filter(isEffective)
+      : invoicesFrom(dataset, key).filter(isEffective);
+  const extra = key === 'XML' ? [] : dataset.revenues.filter((revenue) => revenue.source === key);
+
+  if (invoices.length === 0 && extra.length === 0) {
+    return {
+      ok: false,
+      unavailable: {
+        label: SOURCE_LABELS[key],
+        reason: 'Nenhum documento desta origem foi importado nesta auditoria.',
+      },
+    };
   }
 
-  const invoices = invoicesFrom(dataset, source).filter(isEffective);
-  const extra = dataset.revenues.filter((revenue) => revenue.source === source);
-  if (invoices.length === 0 && extra.length === 0) return null;
+  const documentLabel =
+    key === 'XML'
+      ? 'documentos XML'
+      : key === 'EFD_ICMS_IPI'
+        ? 'documentos escriturados (C100)'
+        : 'documentos escriturados (C100/A100)';
 
-  const computation = computeRevenueFromInvoices(
-    invoices,
-    policy,
-    source === 'EFD_ICMS_IPI' ? 'documentos escriturados (C100)' : 'documentos escriturados (C100/A100)',
-  );
+  const composition = composeRevenue(invoices, policy, documentLabel);
+
+  if (composition.hasPendingReview) {
+    return {
+      ok: false,
+      unavailable: {
+        label: SOURCE_LABELS[key],
+        reason:
+          `${composition.review.length} documento(s), somando ${formatBRL(composition.reviewAmount)}, ` +
+          'aguardam classificação de CFOP na Política de Receita. Enquanto houver documentos em ' +
+          'revisão, o faturamento desta origem não pode ser apurado sem risco de conclusão indevida.',
+      },
+    };
+  }
+
   const extraAmount = sumCents(extra.map((revenue) => revenue.amount));
-  const total = (computation.amount + extraAmount) as Cents;
-
+  const total = (composition.includedAmount + extraAmount) as Cents;
   const description =
-    computation.description +
+    composition.description +
     (extra.length > 0
       ? ` Somados ${formatBRL(extraAmount)} de outras operações declaradas como receita: ` +
         extra.map((revenue) => revenue.description).join(' ')
       : '');
 
   return {
-    amount: total,
-    description,
-    source,
-    fileName: invoices[0]?.fileName ?? extra[0]?.fileName ?? null,
-    documentCount: computation.documentCount,
+    ok: true,
+    figure: {
+      amount: total,
+      description,
+      source: key === 'XML' ? 'XML_NFE' : key,
+      origin: invoices[0]?.origin ?? extra[0]?.origin ?? null,
+      documentCount: composition.included.length,
+      composition,
+    },
   };
 }
 
-function toFigure(
-  computation: RevenueComputation,
-  source: DataSourceKind,
-  fileName: string | null,
-): RevenueFigure {
-  return {
-    amount: computation.amount,
-    description: computation.description,
-    source,
-    fileName,
-    documentCount: computation.documentCount,
-  };
-}
-
-/** Revenue as declared in the PGDAS-D. */
-function revenueFromPgdasd(dataset: AuditDataset): RevenueFigure | null {
+/**
+ * Receita declarada no PGDAS-D.
+ *
+ * Só é considerada quando a extração tem confiança alta — o que acontece
+ * automaticamente, quando o parser reconhece o campo, ou após a confirmação
+ * manual do auditor. Um valor de confiança média jamais alimenta uma conclusão.
+ */
+export function revenueFromPgdasd(dataset: AuditDataset): RevenueOutcome {
+  const declaration = dataset.declarations.find((entry) => entry.source === 'PGDAS_D');
   const record = dataset.revenues.find((revenue) => revenue.source === 'PGDAS_D');
-  if (!record) return null;
+
+  if (!declaration && !record) {
+    return {
+      ok: false,
+      unavailable: {
+        label: SOURCE_LABELS.PGDAS_D,
+        reason: 'Nenhum PGDAS-D foi importado nesta auditoria.',
+      },
+    };
+  }
+
+  if (!record || declaration?.period.grossRevenue.value === null) {
+    return {
+      ok: false,
+      unavailable: {
+        label: SOURCE_LABELS.PGDAS_D,
+        reason:
+          'A receita bruta do PGDAS-D não foi identificada no documento. ' +
+          'Confirme o valor na validação do arquivo antes de executar este cruzamento.',
+      },
+    };
+  }
+
+  const confidence = declaration?.period.grossRevenue.confidence ?? 'NAO_IDENTIFICADO';
+  if (confidence !== 'ALTA') {
+    return {
+      ok: false,
+      unavailable: {
+        label: SOURCE_LABELS.PGDAS_D,
+        reason:
+          `A receita bruta do PGDAS-D foi extraída com confiança ${confidence.toLowerCase()} e ainda ` +
+          'não foi confirmada. Confirme o valor na validação do arquivo antes de executar este cruzamento.',
+      },
+    };
+  }
+
   return {
-    amount: record.amount,
-    description: record.description,
-    source: 'PGDAS_D',
-    fileName: record.fileName,
-    documentCount: null,
+    ok: true,
+    figure: {
+      amount: record.amount,
+      description: record.description,
+      source: 'PGDAS_D',
+      origin: record.origin,
+      documentCount: null,
+      composition: null,
+    },
   };
 }
 
@@ -104,11 +189,19 @@ interface RevenueRuleSpec {
   readonly gravidade: AuditRule['gravidade'];
   readonly documentosNecessarios: readonly DataSourceKind[];
   readonly limitacoes: string;
-  readonly originLabel: string;
-  readonly targetLabel: string;
+  readonly originKey: RevenueSourceKey;
+  readonly targetKey: RevenueSourceKey;
   readonly analiseHumana: string;
-  readonly origin: (dataset: AuditDataset, policy: RevenuePolicy) => RevenueFigure | null;
-  readonly target: (dataset: AuditDataset, policy: RevenuePolicy) => RevenueFigure | null;
+}
+
+function resolve(
+  dataset: AuditDataset,
+  key: RevenueSourceKey,
+  policy: RevenuePolicy,
+): RevenueOutcome {
+  return key === 'PGDAS_D'
+    ? revenueFromPgdasd(dataset)
+    : revenueFromDocuments(dataset, key, policy);
 }
 
 function revenueRule(spec: RevenueRuleSpec): AuditRule {
@@ -123,13 +216,14 @@ function revenueRule(spec: RevenueRuleSpec): AuditRule {
     toleranciaPadrao: DEFAULT_TOLERANCE,
     limitacoes: spec.limitacoes,
     executar(context: RuleContext): RuleResult {
-      const origin = spec.origin(context.dataset, context.revenuePolicy);
-      const target = spec.target(context.dataset, context.revenuePolicy);
+      const origin = resolve(context.dataset, spec.originKey, context.revenuePolicy);
+      const target = resolve(context.dataset, spec.targetKey, context.revenuePolicy);
 
-      if (!origin || !target) {
-        const missing = [!origin ? spec.originLabel : null, !target ? spec.targetLabel : null]
-          .filter((value): value is string => value !== null)
-          .join(' e ');
+      if (!origin.ok || !target.ok) {
+        const motivos = [
+          ...(origin.ok ? [] : [`${origin.unavailable.label}: ${origin.unavailable.reason}`]),
+          ...(target.ok ? [] : [`${target.unavailable.label}: ${target.unavailable.reason}`]),
+        ];
         return {
           cruzamentosCorretos: 0,
           findings: [
@@ -137,27 +231,54 @@ function revenueRule(spec: RevenueRuleSpec): AuditRule {
               resultado: 'NAO_VERIFICADO',
               natureza: 'FATO',
               titulo: `${spec.codigo}: cruzamento não executado`,
-              descricao: `Não foi possível apurar ${missing} com os arquivos importados nesta auditoria.`,
-              evidencias: [],
+              descricao: motivos.join(' '),
+              analiseHumana:
+                'Um cruzamento que não pode ser executado não é evidência de conformidade nem de erro. ' +
+                'Resolva os pontos acima e reprocesse a auditoria.',
+              evidencias: motivos.map((motivo, index) =>
+                evidence(`Motivo ${index + 1}`, 'Verificação de pré-requisitos da regra', motivo),
+              ),
             },
           ],
-          naoAplicavel: `Faturamento não apurado: ${missing}.`,
+          naoAplicavel: motivos.join(' '),
         };
       }
 
-      const comparison = compareValues(origin.amount, target.amount, context.config.tolerancia);
+      const comparison = compareValues(
+        origin.figure.amount,
+        target.figure.amount,
+        context.config.tolerancia,
+      );
+
       const evidencias = [
-        moneyEvidence(spec.originLabel, origin.description, origin.amount, {
-          source: origin.source,
-          fileName: origin.fileName,
+        moneyEvidence(revenueLabel(spec.originKey), origin.figure.description, origin.figure.amount, {
+          source: origin.figure.source,
+          from: origin.figure.origin,
         }),
-        moneyEvidence(spec.targetLabel, target.description, target.amount, {
-          source: target.source,
-          fileName: target.fileName,
+        moneyEvidence(revenueLabel(spec.targetKey), target.figure.description, target.figure.amount, {
+          source: target.figure.source,
+          from: target.figure.origin,
         }),
         evidence('Competência', 'Competência da auditoria', formatCompetencia(context.dataset.competencia)),
         evidence('Tolerância', 'Configuração da regra', comparison.toleranceLabel),
       ];
+
+      for (const [key, outcome] of [
+        [spec.originKey, origin],
+        [spec.targetKey, target],
+      ] as const) {
+        if (!outcome.ok || !outcome.figure.composition) continue;
+        const composition = outcome.figure.composition;
+        evidencias.push(
+          evidence(
+            `Composição — ${revenueLabel(key)}`,
+            'Classificação documento a documento pela Política de Receita',
+            `${composition.included.length} incluídos · ${composition.excluded.length} excluídos · ` +
+              `${composition.review.length} em revisão`,
+            { source: outcome.figure.source },
+          ),
+        );
+      }
 
       if (comparison.withinTolerance) {
         return { cruzamentosCorretos: 1, findings: [] };
@@ -171,11 +292,12 @@ function revenueRule(spec: RevenueRuleSpec): AuditRule {
             natureza: 'INDICIO',
             titulo: spec.nome,
             descricao:
-              `${spec.originLabel}: ${formatBRL(comparison.origin)}. ${spec.targetLabel}: ${formatBRL(comparison.target)}. ` +
+              `${revenueLabel(spec.originKey)}: ${formatBRL(comparison.origin)}. ` +
+              `${revenueLabel(spec.targetKey)}: ${formatBRL(comparison.target)}. ` +
               `Diferença de ${formatBRL(comparison.difference)}.`,
-            rotuloOrigem: spec.originLabel,
+            rotuloOrigem: revenueLabel(spec.originKey),
             valorOrigem: comparison.origin,
-            rotuloDestino: spec.targetLabel,
+            rotuloDestino: revenueLabel(spec.targetKey),
             valorDestino: comparison.target,
             diferenca: comparison.difference,
             analiseHumana: spec.analiseHumana,
@@ -192,20 +314,19 @@ export const attFat001 = revenueRule({
   codigo: 'ATT-FAT-001',
   nome: 'Faturamento apurado pelos documentos fiscais diferente do PGDAS-D',
   descricao:
-    'Compara o somatório dos documentos fiscais de saída (XML) com a receita bruta do período informada no PGDAS-D.',
+    'Compara a receita composta a partir dos documentos fiscais de saída (XML) com a receita bruta do ' +
+    'período informada no PGDAS-D.',
   gravidade: 'CRITICA',
   documentosNecessarios: ['XML_NFE', 'PGDAS_D'],
   limitacoes:
-    'Os dois valores medem coisas diferentes por construcao: o somatório de documentos inclui toda operação de saída ' +
-    'documentada, enquanto a receita bruta declarada segue as regras de composição da receita aplicáveis ao regime. ' +
-    'Devoluções, transferências, remessas e operações sem natureza de receita explicam diferenças legitimas.',
-  originLabel: 'Faturamento pelos documentos fiscais (XML)',
-  targetLabel: 'Receita bruta declarada no PGDAS-D',
+    'A composição da receita segue a Política de Receita configurada pela organização. O sistema não ' +
+    'decide sozinho quais operações integram a receita bruta: enquanto houver CFOP não classificado, a ' +
+    'regra não é executada.',
+  originKey: 'XML',
+  targetKey: 'PGDAS_D',
   analiseHumana:
-    'Confira quais CFOPs compoem o somatório dos documentos e se ha operações que não integram a receita bruta. ' +
-    'Os CFOPs a excluir do cálculo podem ser parametrizados em Configurações.',
-  origin: (dataset, policy) => revenueFromDocuments(dataset, 'XML', policy),
-  target: revenueFromPgdasd,
+    'Confira a composição documento a documento e a classificação dos CFOPs antes de concluir por ' +
+    'omissão de receita.',
 });
 
 export const attFat002 = revenueRule({
@@ -213,37 +334,35 @@ export const attFat002 = revenueRule({
   codigo: 'ATT-FAT-002',
   nome: 'Faturamento da EFD ICMS/IPI diferente do PGDAS-D',
   descricao:
-    'Compara o somatório dos documentos de saída escriturados na EFD ICMS/IPI com a receita bruta informada no PGDAS-D.',
+    'Compara a receita composta a partir dos documentos de saída escriturados na EFD ICMS/IPI com a ' +
+    'receita bruta informada no PGDAS-D.',
   gravidade: 'ALTA',
   documentosNecessarios: ['EFD_ICMS_IPI', 'PGDAS_D'],
   limitacoes:
-    'A EFD ICMS/IPI escritura operações por sua natureza fiscal, que não coincide necessariamente com a composição ' +
-    'da receita bruta declarada. A diferença é um fato numérico e não um erro presumido.',
-  originLabel: 'Faturamento pela EFD ICMS/IPI',
-  targetLabel: 'Receita bruta declarada no PGDAS-D',
+    'A EFD ICMS/IPI escritura operações por sua natureza fiscal, que não coincide necessariamente com a ' +
+    'composição da receita bruta declarada. A diferença é um fato numérico e não um erro presumido.',
+  originKey: 'EFD_ICMS_IPI',
+  targetKey: 'PGDAS_D',
   analiseHumana:
     'Verifique a composição por CFOP do somatório da EFD antes de concluir por omissão de receita.',
-  origin: (dataset, policy) => revenueFromDocuments(dataset, 'EFD_ICMS_IPI', policy),
-  target: revenueFromPgdasd,
 });
 
 export const attFat003 = revenueRule({
   id: 'att-fat-003',
   codigo: 'ATT-FAT-003',
   nome: 'Faturamento da EFD-Contribuições diferente do PGDAS-D',
-  descricao:
-    'Compara a receita apurada na EFD-Contribuições com a receita bruta informada no PGDAS-D.',
+  descricao: 'Compara a receita apurada na EFD-Contribuições com a receita bruta informada no PGDAS-D.',
   gravidade: 'ALTA',
   documentosNecessarios: ['EFD_CONTRIBUICOES', 'PGDAS_D'],
   limitacoes:
-    'Empresas do Simples Nacional em regra não entregam EFD-Contribuições; a presença simultânea dos dois arquivos ' +
-    'deve ser confirmada antes de qualquer conclusão. As bases das duas obrigações também não são idênticas.',
-  originLabel: 'Receita apurada na EFD-Contribuições',
-  targetLabel: 'Receita bruta declarada no PGDAS-D',
+    'Empresas do Simples Nacional em regra não entregam EFD-Contribuições; a presença simultânea dos dois ' +
+    'arquivos deve ser confirmada antes de qualquer conclusão. As bases das duas obrigações também não ' +
+    'são idênticas.',
+  originKey: 'EFD_CONTRIBUICOES',
+  targetKey: 'PGDAS_D',
   analiseHumana:
-    'Confirme se a empresa esta obrigada as duas entregas na competência e compare as bases utilizadas em cada uma.',
-  origin: (dataset, policy) => revenueFromDocuments(dataset, 'EFD_CONTRIBUICOES', policy),
-  target: revenueFromPgdasd,
+    'Confirme se a empresa está obrigada às duas entregas na competência e compare as bases utilizadas ' +
+    'em cada uma.',
 });
 
 export const attFat004 = revenueRule({
@@ -251,18 +370,18 @@ export const attFat004 = revenueRule({
   codigo: 'ATT-FAT-004',
   nome: 'Faturamento pelos documentos fiscais diferente da receita da EFD-Contribuições',
   descricao:
-    'Compara o somatório dos documentos fiscais de saída (XML) com a receita apurada na EFD-Contribuições.',
+    'Compara a receita composta a partir dos documentos fiscais de saída (XML) com a receita apurada na ' +
+    'EFD-Contribuições.',
   gravidade: 'ALTA',
   documentosNecessarios: ['XML_NFE', 'EFD_CONTRIBUICOES'],
   limitacoes:
-    'A EFD-Contribuições alcanca receitas que não se documentam por NF-e (registros F100, por exemplo) e pode ' +
-    'excluir operações que constam no XML. A diferença isolada não caracteriza omissão.',
-  originLabel: 'Faturamento pelos documentos fiscais (XML)',
-  targetLabel: 'Receita apurada na EFD-Contribuições',
+    'A EFD-Contribuições alcança receitas que não se documentam por NF-e (registros F100, por exemplo) e ' +
+    'pode excluir operações que constam no XML. A diferença isolada não caracteriza omissão.',
+  originKey: 'XML',
+  targetKey: 'EFD_CONTRIBUICOES',
   analiseHumana:
-    'Verifique receitas sem documento fiscal eletrônico e operações do XML sem natureza de receita antes de concluir.',
-  origin: (dataset, policy) => revenueFromDocuments(dataset, 'XML', policy),
-  target: (dataset, policy) => revenueFromDocuments(dataset, 'EFD_CONTRIBUICOES', policy),
+    'Verifique receitas sem documento fiscal eletrônico e operações do XML sem natureza de receita antes ' +
+    'de concluir.',
 });
 
 export const FATURAMENTO_RULES: readonly AuditRule[] = [attFat001, attFat002, attFat003, attFat004];

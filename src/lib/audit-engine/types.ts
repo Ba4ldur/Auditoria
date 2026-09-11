@@ -14,7 +14,7 @@
 
 import type { Cents } from '@/lib/core/money';
 import type { AuditDataset } from '@/lib/normalization/dataset';
-import type { RevenuePolicy } from './revenue';
+import type { RevenuePolicy } from './revenue-composition';
 import type { AuditModule, DataSourceKind } from '@/lib/domain/sources';
 import type {
   FindingEvidence,

@@ -23,6 +23,7 @@ import {
   EMPTY_IDENTITY,
   extracted,
   notIdentified,
+  recordOrigin,
   type Declaration,
   type DeclarationLine,
   type ExtractedField,
@@ -34,7 +35,8 @@ import {
 } from '@/lib/domain/model';
 import type { FileMessage } from '@/lib/domain/entities';
 import { extractPdfText, isPdf, normalizeForMatch } from '../text';
-import type { DetectionHint, DetectionInput, FileParser, ParsedPayload, ParserInput } from '../../types';
+import { EMPTY_PARSE_LOG, type DetectionHint, type DetectionInput, type FileParser, type ParsedPayload, type ParserInput } from '../../types';
+import { PGDAS_PARSER_VERSION } from '../../versions';
 
 const MONEY = String.raw`(\d{1,3}(?:\.\d{3})*,\d{2}|\d+,\d{2})`;
 
@@ -227,8 +229,11 @@ export function parsePgdasdText(
     lines,
     confidence,
     unresolvedFields: unresolved,
-    fileId: context.fileId,
-    fileName: context.fileName,
+    origin: recordOrigin({
+      fileId: context.fileId,
+      fileName: context.fileName,
+      recordCode: 'PGDAS-D',
+    }),
   };
 
   return { declaration, messages };
@@ -280,8 +285,11 @@ async function parsePgdasdFile(input: ParserInput): Promise<Result<ParsedPayload
         `Campo "Receita Bruta do PA" localizado no documento ${input.fileName}` +
         ` (confiança ${declaration.period.grossRevenue.confidence.toLowerCase()}).`,
       documentCount: null,
-      fileId: input.fileId,
-      fileName: input.fileName,
+      origin: recordOrigin({
+        fileId: input.fileId,
+        fileName: input.fileName,
+        recordCode: 'Receita Bruta do PA',
+      }),
     });
   }
 
@@ -297,8 +305,11 @@ async function parsePgdasdFile(input: ParserInput): Promise<Result<ParsedPayload
         base: null,
         amount: line.amount,
         description: `Tributo "${line.label}" informado no PGDAS-D (${input.fileName}).`,
-        fileId: input.fileId,
-        fileName: input.fileName,
+        origin: recordOrigin({
+          fileId: input.fileId,
+          fileName: input.fileName,
+          recordCode: line.label,
+        }),
       });
     }
     if (declaration.period.totalDue.value !== null) {
@@ -311,8 +322,11 @@ async function parsePgdasdFile(input: ParserInput): Promise<Result<ParsedPayload
         base: declaration.period.grossRevenue.value ?? ZERO,
         amount: declaration.period.totalDue.value,
         description: `Total do débito exigível informado no PGDAS-D (${input.fileName}).`,
-        fileId: input.fileId,
-        fileName: input.fileName,
+        origin: recordOrigin({
+          fileId: input.fileId,
+          fileName: input.fileName,
+          recordCode: 'Total do débito exigível',
+        }),
       });
     }
   }
@@ -327,6 +341,8 @@ async function parsePgdasdFile(input: ParserInput): Promise<Result<ParsedPayload
 
   return ok({
     source: 'PGDAS_D',
+    parserVersion: PGDAS_PARSER_VERSION,
+    log: { ...EMPTY_PARSE_LOG, warnings: messages.filter((message) => message.level === 'ALERTA') },
     identity: {
       ...EMPTY_IDENTITY,
       taxId: declaration.taxId,

@@ -14,6 +14,7 @@ import type { Competencia } from '@/lib/core/competencia';
 import { identifyFile } from '@/lib/parsers/identify';
 import { assessIdentity } from '@/lib/normalization/identity';
 import { getStorage, getStore, storagePathFor } from '@/lib/data';
+import { classifyUploadReliability } from '@/lib/pipeline/reliability';
 
 /** Extensions accepted by the current release (requirement 8). */
 export const ACCEPTED_EXTENSIONS = ['.xml', '.zip', '.txt', '.pdf'] as const;
@@ -82,6 +83,7 @@ export async function ingestUpload(params: {
   } catch (error) {
     await store.updateFile(file.id, {
       status: 'ERRO',
+      reliability: classifyUploadReliability({ identityCheck: 'NAO_IDENTIFICADO', failed: true }),
       messages: [
         { level: 'ERRO', code: 'STORAGE_FALHA', message: 'Falha ao armazenar o arquivo.', detail: describeError(error) },
       ],
@@ -95,6 +97,7 @@ export async function ingestUpload(params: {
     const updated = await store.updateFile(file.id, {
       storagePath,
       status: 'ERRO',
+      reliability: classifyUploadReliability({ identityCheck: 'NAO_IDENTIFICADO', failed: true }),
       messages: [
         { level: 'ERRO', code: identification.error.code, message: identification.error.message },
       ],
@@ -116,6 +119,7 @@ export async function ingestUpload(params: {
     detectedStartDate: identity.startDate,
     detectedEndDate: identity.endDate,
     identityCheck: assessment.check,
+    reliability: classifyUploadReliability({ identityCheck: assessment.check, failed: assessment.blocking }),
     status: assessment.blocking ? 'ERRO' : 'PENDENTE',
     messages,
   });

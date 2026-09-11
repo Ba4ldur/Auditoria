@@ -75,6 +75,7 @@ export interface ContribAnalytic {
 
 /** Register F100 — other documents and operations. */
 export interface ContribOtherOperation {
+  readonly line: number;
   readonly indOper: string | null;
   readonly codPart: string | null;
   readonly codItem: string | null;
@@ -91,6 +92,7 @@ export interface ContribOtherOperation {
 
 /** Registers M200/M600 — consolidation of the contribution for the period. */
 export interface ContribConsolidation {
+  readonly line: number;
   readonly totalNonCumulativePeriod: Cents;
   readonly totalCreditsDiscounted: Cents;
   readonly totalNonCumulativeDue: Cents;
@@ -105,6 +107,7 @@ export interface ContribConsolidation {
 }
 
 export interface ContribParticipant {
+  readonly line: number;
   readonly codPart: string;
   readonly nome: string | null;
   readonly cnpj: string | null;
@@ -175,6 +178,7 @@ function quantity(record: SpedRecord, position: number): number | null {
 /** M200 and M600 share the same field order, differing only in the tax. */
 function readConsolidation(record: SpedRecord): ContribConsolidation {
   return {
+    line: record.line,
     totalNonCumulativePeriod: money(record, 2), // VL_TOT_CONT_NC_PER
     totalCreditsDiscounted: money(record, 3), // VL_TOT_CRED_DESC
     totalNonCumulativeDue: money(record, 5), // VL_TOT_CONT_NC_DEV
@@ -230,6 +234,7 @@ const handlers: RegisterHandler<ContribState>[] = [
       const codPart = field(record, 2); // COD_PART
       if (!codPart) return;
       state.participants.set(codPart, {
+        line: record.line,
         codPart,
         nome: field(record, 3), // NOME
         cnpj: onlyDigits(field(record, 5)) || null, // CNPJ
@@ -362,6 +367,7 @@ const handlers: RegisterHandler<ContribState>[] = [
     description: 'Demais documentos e operações geradoras de contribuição e crédito',
     handle(record, state) {
       state.otherOperations.push({
+        line: record.line,
         indOper: field(record, 2), // IND_OPER
         codPart: field(record, 3), // COD_PART
         codItem: field(record, 4), // COD_ITEM

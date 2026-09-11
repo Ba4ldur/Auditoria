@@ -28,6 +28,48 @@ export const TAX_REGIME_LABELS: Readonly<Record<TaxRegime, string>> = {
 
 export const TAX_REGIMES = Object.keys(TAX_REGIME_LABELS) as TaxRegime[];
 
+/**
+ * Origem exata de um registro normalizado (fase 2, requisito 3).
+ *
+ * Guardar apenas o arquivo não basta para conferência: diante de uma
+ * divergência o auditor precisa chegar até a linha do SPED que produziu o
+ * valor. `recordCode` e `lineNumber` são nulos para origens que não são
+ * orientadas a linha (um XML, por exemplo), e nesse caso `entryName` identifica
+ * a entrada dentro do arquivo compactado.
+ */
+export interface RecordOrigin {
+  readonly fileId: string | null;
+  readonly fileName: string | null;
+  /** Código do registro SPED (`C100`, `M200`) ou o elemento do XML lido. */
+  readonly recordCode: string | null;
+  /** Linha do arquivo original, base 1. Nulo quando a origem não tem linhas. */
+  readonly lineNumber: number | null;
+  /** Caminho da entrada dentro de um ZIP, quando aplicável. */
+  readonly entryName: string | null;
+}
+
+export const UNKNOWN_ORIGIN: RecordOrigin = Object.freeze({
+  fileId: null,
+  fileName: null,
+  recordCode: null,
+  lineNumber: null,
+  entryName: null,
+});
+
+export function recordOrigin(input: Partial<RecordOrigin>): RecordOrigin {
+  return { ...UNKNOWN_ORIGIN, ...input };
+}
+
+/** Texto curto da origem, usado nas evidências e nas telas de rastreabilidade. */
+export function describeOrigin(origin: RecordOrigin): string {
+  const parts: string[] = [];
+  if (origin.entryName) parts.push(origin.entryName);
+  else if (origin.fileName) parts.push(origin.fileName);
+  if (origin.recordCode) parts.push(`registro ${origin.recordCode}`);
+  if (origin.lineNumber !== null) parts.push(`linha ${origin.lineNumber.toLocaleString('pt-BR')}`);
+  return parts.length > 0 ? parts.join(' · ') : 'origem não registrada';
+}
+
 /** Direction of the operation from the audited company's point of view. */
 export type OperationDirection = 'SAIDA' | 'ENTRADA' | 'INDEFINIDA';
 
@@ -141,9 +183,8 @@ export interface Invoice extends FiscalDocument {
   readonly cfops: readonly string[];
   readonly totals: InvoiceTotals;
   readonly items: readonly InvoiceItem[];
-  /** Identifier of the uploaded file this invoice was extracted from. */
-  readonly fileId: string | null;
-  readonly fileName: string | null;
+  /** Arquivo, registro e linha de onde o documento foi lido. */
+  readonly origin: RecordOrigin;
 }
 
 export type RevenueBasis =
@@ -167,8 +208,7 @@ export interface RevenueRecord {
   readonly description: string;
   /** Number of documents/records aggregated into `amount`, when applicable. */
   readonly documentCount: number | null;
-  readonly fileId: string | null;
-  readonly fileName: string | null;
+  readonly origin: RecordOrigin;
 }
 
 export type TaxKind =
@@ -221,8 +261,7 @@ export interface TaxRecord {
   readonly base: Cents | null;
   readonly amount: Cents;
   readonly description: string;
-  readonly fileId: string | null;
-  readonly fileName: string | null;
+  readonly origin: RecordOrigin;
 }
 
 /** Confidence attached to a value extracted from a weakly structured source. */
@@ -266,8 +305,7 @@ export interface Declaration {
   /** Overall confidence of the extraction; drives manual-confirmation prompts. */
   readonly confidence: ExtractionConfidence;
   readonly unresolvedFields: readonly string[];
-  readonly fileId: string | null;
-  readonly fileName: string | null;
+  readonly origin: RecordOrigin;
 }
 
 /** Period figures of a declaration. */
@@ -296,6 +334,7 @@ export interface ParticipantRecord {
   readonly uf: string | null;
   readonly stateRegistration: string | null;
   readonly countryCode: string | null;
+  readonly origin: RecordOrigin;
 }
 
 /** Registration data declared by the audited company inside a file. */

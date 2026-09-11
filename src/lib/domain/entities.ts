@@ -95,6 +95,56 @@ export const FILE_STATUS_LABELS: Readonly<Record<FileProcessingStatus, string>> 
 /** Identity compatibility between the file content and the selected company. */
 export type IdentityCheck = 'COMPATIVEL' | 'INCOMPATIVEL' | 'NAO_IDENTIFICADO';
 
+/**
+ * Confiabilidade da leitura do arquivo (fase 2, requisito 16).
+ *
+ * O status é apresentado **antes** de o arquivo participar da auditoria. Um
+ * arquivo em REQUER_CONFERENCIA pode ser utilizado, mas o sistema avisa de
+ * forma explícita que o resultado depende de conferência humana.
+ */
+export type FileReliability =
+  | 'VALIDADO'
+  | 'VALIDADO_COM_ALERTAS'
+  | 'REQUER_CONFERENCIA'
+  | 'INCOMPATIVEL'
+  | 'ERRO';
+
+export const RELIABILITY_LABELS: Readonly<Record<FileReliability, string>> = {
+  VALIDADO: 'Validado',
+  VALIDADO_COM_ALERTAS: 'Validado com alertas',
+  REQUER_CONFERENCIA: 'Requer conferência',
+  INCOMPATIVEL: 'Incompatível',
+  ERRO: 'Erro',
+};
+
+export const RELIABILITY_DESCRIPTIONS: Readonly<Record<FileReliability, string>> = {
+  VALIDADO: 'Leiaute reconhecido e nenhum alerta registrado na leitura.',
+  VALIDADO_COM_ALERTAS: 'O arquivo foi lido, mas há alertas que merecem leitura antes do uso.',
+  REQUER_CONFERENCIA:
+    'A leitura depende de conferência humana: leiaute não verificado, campos não identificados ' +
+    'ou registros relevantes não mapeados.',
+  INCOMPATIVEL: 'O CNPJ do arquivo não corresponde à empresa selecionada. Não participa dos cruzamentos.',
+  ERRO: 'O arquivo não pôde ser interpretado.',
+};
+
+/** Cópia persistida do log de parsing. */
+export interface FileParseLog {
+  readonly warnings: readonly FileMessage[];
+  readonly errors: readonly FileMessage[];
+  readonly unsupportedRecords: readonly { code: string; count: number }[];
+  readonly unsupportedLayout: {
+    readonly declaredVersion: string | null;
+    readonly verifiedVersions: readonly string[];
+  } | null;
+}
+
+/** Resumo estrutural do arquivo, calculado no processamento. */
+export interface FileInspection {
+  readonly totalLines: number;
+  readonly totalRecords: number;
+  readonly registers: readonly { code: string; description: string | null; count: number; supported: boolean }[];
+}
+
 export interface AuditFile {
   readonly id: string;
   readonly organizationId: string;
@@ -111,9 +161,14 @@ export interface AuditFile {
   readonly detectedStartDate: string | null;
   readonly detectedEndDate: string | null;
   readonly identityCheck: IdentityCheck;
+  readonly reliability: FileReliability;
   readonly status: FileProcessingStatus;
   readonly messages: readonly FileMessage[];
   readonly stats: FileStats | null;
+  /** Versão do parser que interpretou este arquivo. */
+  readonly parserVersion: string | null;
+  readonly parseLog: FileParseLog | null;
+  readonly inspection: FileInspection | null;
   /** Set when this file was extracted from a container (ZIP). */
   readonly parentFileId: string | null;
   readonly uploadedAt: string;
@@ -199,6 +254,10 @@ export interface FindingEvidence {
   readonly value: string | null;
   readonly source: DataSourceKind | null;
   readonly fileName: string | null;
+  /** Código do registro SPED ou elemento do XML que produziu o valor. */
+  readonly recordCode: string | null;
+  /** Linha do arquivo original, quando a origem é orientada a linha. */
+  readonly lineNumber: number | null;
   readonly reference: string | null;
 }
 
@@ -231,6 +290,26 @@ export interface AuditFinding {
   readonly updatedAt: string;
 }
 
+/**
+ * Confirmação manual de um campo extraído (fase 2, requisitos 10 e 11).
+ *
+ * Guarda o valor original lido pelo parser ao lado do valor confirmado, quem
+ * confirmou e quando. O arquivo original nunca é alterado.
+ */
+export interface FieldConfirmation {
+  readonly id: string;
+  readonly organizationId: string;
+  readonly auditId: string;
+  readonly fileId: string;
+  /** Chave do campo, conforme o catálogo de campos confirmáveis. */
+  readonly field: string;
+  readonly originalValue: string | null;
+  readonly confirmedValue: string;
+  readonly confirmedBy: string;
+  readonly confirmedAt: string;
+  readonly note: string | null;
+}
+
 export interface AuditComment {
   readonly id: string;
   readonly organizationId: string;
@@ -238,6 +317,40 @@ export interface AuditComment {
   readonly author: string;
   readonly body: string;
   readonly createdAt: string;
+}
+
+/**
+ * Tratamento de um CFOP na composição da receita (fase 2, requisitos 5, 6 e 23).
+ *
+ * O sistema não define tratamento tributário por conta própria. Um CFOP sem
+ * regra configurada fica em REVISAR, e o documento correspondente aparece
+ * separado do faturamento considerado — nunca escondido, nunca somado por
+ * suposição.
+ */
+export type CfopTreatment = 'INCLUIR' | 'EXCLUIR' | 'REVISAR';
+
+export const CFOP_TREATMENT_LABELS: Readonly<Record<CfopTreatment, string>> = {
+  INCLUIR: 'Incluir na receita',
+  EXCLUIR: 'Excluir da receita',
+  REVISAR: 'Revisar',
+};
+
+export const CFOP_TREATMENTS = Object.keys(CFOP_TREATMENT_LABELS) as CfopTreatment[];
+
+/** Procedência da regra: configurada pelo usuário ou carregada pela demonstração. */
+export type CfopRuleSource = 'CONFIGURADO' | 'DEMONSTRACAO';
+
+export interface CfopRule {
+  readonly id: string;
+  readonly organizationId: string;
+  readonly cfop: string;
+  readonly description: string | null;
+  readonly treatment: CfopTreatment;
+  /** Justificativa registrada por quem configurou. */
+  readonly reason: string | null;
+  readonly ruleSource: CfopRuleSource;
+  readonly updatedBy: string | null;
+  readonly updatedAt: string;
 }
 
 /** Per-organization override of a rule's default configuration. */
@@ -272,11 +385,5 @@ export interface OrganizationSettings {
   readonly organizationId: string;
   readonly scoreWeights: ScoreWeights;
   readonly maxUploadBytes: number;
-  /**
-   * CFOPs excluded from the revenue computed out of fiscal documents.
-   * Empty by default: which operations compose revenue is a tax judgement the
-   * system does not make on the auditor's behalf (requirement 35).
-   */
-  readonly revenueCfopExclusions: readonly string[];
   readonly updatedAt: string;
 }

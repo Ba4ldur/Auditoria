@@ -25,11 +25,16 @@ export function FindingPanel({
   finding,
   comments,
   closeHref,
+  auditId,
 }: {
   finding: AuditFinding;
   comments: readonly AuditComment[];
   closeHref: string;
+  /** Habilita o link de comparação documento a documento. */
+  auditId?: string;
 }) {
+  const accessKey =
+    finding.documentRef && /^\d{44}$/.test(finding.documentRef) ? finding.documentRef : null;
   return (
     <aside className="flex h-full flex-col bg-surface">
       <header className="flex items-start justify-between gap-3 border-b border-line bg-navy-900 px-5 py-4 text-white">
@@ -73,6 +78,14 @@ export function FindingPanel({
         {finding.documentRef ? (
           <p className="mt-4 text-xs text-ink-muted">
             Documento: <span className="font-mono break-all text-ink">{finding.documentRef}</span>
+            {accessKey && auditId ? (
+              <Link
+                href={`/auditorias/${auditId}/documento/${accessKey}`}
+                className="mt-1 block font-medium text-navy-700 underline"
+              >
+                Comparar XML × escrituração
+              </Link>
+            ) : null}
           </p>
         ) : null}
 
@@ -93,10 +106,20 @@ export function FindingPanel({
                     ) : null}
                   </div>
                   <p className="mt-1 text-[0.6875rem] leading-relaxed text-ink-muted">{item.origin}</p>
-                  <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                     {item.source ? <Badge tone="muted">{sourceShortLabel(item.source)}</Badge> : null}
                     {item.fileName ? (
                       <span className="text-[0.625rem] break-all text-ink-subtle">{item.fileName}</span>
+                    ) : null}
+                    {item.recordCode ? (
+                      <span className="text-[0.625rem] text-ink-subtle">
+                        registro {item.recordCode}
+                      </span>
+                    ) : null}
+                    {item.lineNumber !== null ? (
+                      <span className="text-[0.625rem] font-medium text-navy-600">
+                        linha {item.lineNumber.toLocaleString('pt-BR')}
+                      </span>
                     ) : null}
                   </div>
                 </li>

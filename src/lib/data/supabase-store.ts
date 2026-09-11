@@ -20,8 +20,10 @@ import {
   type AuditComment,
   type AuditFile,
   type AuditFinding,
+  type CfopRule,
   type Company,
   type CompanyRegimeHistory,
+  type FieldConfirmation,
   type Organization,
   type OrganizationSettings,
   type RuleSetting,
@@ -30,6 +32,8 @@ import type { TaxRegime } from '@/lib/domain/model';
 import { MAX_UPLOAD_BYTES } from './local-store';
 import {
   toAudit,
+  toCfopRule,
+  toFieldConfirmation,
   toAuditFile,
   toComment,
   toCompany,
@@ -47,6 +51,8 @@ import {
 } from './supabase-mappers';
 import type {
   AuditFileInput,
+  CfopRuleInput,
+  FieldConfirmationInput,
   AuditFilePatch,
   AuditInput,
   AuditPatch,
@@ -94,7 +100,6 @@ export class SupabaseStore implements DataStore {
         organizationId: this.organizationId,
         scoreWeights: DEFAULT_SCORE_WEIGHTS,
         maxUploadBytes: MAX_UPLOAD_BYTES,
-        revenueCfopExclusions: [],
         updatedAt: new Date().toISOString(),
       };
     }
@@ -113,7 +118,6 @@ export class SupabaseStore implements DataStore {
           organization_id: this.organizationId,
           score_weights: merged.scoreWeights,
           max_upload_bytes: merged.maxUploadBytes,
-          revenue_cfop_exclusions: merged.revenueCfopExclusions,
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'organization_id' },
@@ -342,6 +346,7 @@ export class SupabaseStore implements DataStore {
         sha256: input.sha256,
         status: 'PENDENTE',
         identity_check: 'NAO_IDENTIFICADO',
+        reliability: 'REQUER_CONFERENCIA',
         messages: [],
       })
       .select()
@@ -359,9 +364,13 @@ export class SupabaseStore implements DataStore {
     if (patch.detectedStartDate !== undefined) row.detected_start_date = patch.detectedStartDate;
     if (patch.detectedEndDate !== undefined) row.detected_end_date = patch.detectedEndDate;
     if (patch.identityCheck !== undefined) row.identity_check = patch.identityCheck;
+    if (patch.reliability !== undefined) row.reliability = patch.reliability;
     if (patch.status !== undefined) row.status = patch.status;
     if (patch.messages !== undefined) row.messages = patch.messages;
     if (patch.stats !== undefined) row.stats = patch.stats;
+    if (patch.parserVersion !== undefined) row.parser_version = patch.parserVersion;
+    if (patch.parseLog !== undefined) row.parse_log = patch.parseLog;
+    if (patch.inspection !== undefined) row.inspection = patch.inspection;
     if (patch.processedAt !== undefined) row.processed_at = patch.processedAt;
 
     const result = await this.client
@@ -433,8 +442,11 @@ export class SupabaseStore implements DataStore {
         cfop_principal: invoice.cfopPrincipal,
         cfops: invoice.cfops,
         totals: invoice.totals,
-        file_id: invoice.fileId,
-        file_name: invoice.fileName,
+        file_id: invoice.origin.fileId,
+        file_name: invoice.origin.fileName,
+        origin_record_code: invoice.origin.recordCode,
+        origin_line_number: invoice.origin.lineNumber,
+        origin_entry_name: invoice.origin.entryName,
       }));
       const inserted = await this.client.from('invoices').insert(invoiceRows);
       if (inserted.error) throw new Error(`Falha ao gravar documentos: ${inserted.error.message}`);
@@ -470,8 +482,11 @@ export class SupabaseStore implements DataStore {
           amount: revenue.amount,
           description: revenue.description,
           document_count: revenue.documentCount,
-          file_id: revenue.fileId,
-          file_name: revenue.fileName,
+          file_id: revenue.origin.fileId,
+          file_name: revenue.origin.fileName,
+          origin_record_code: revenue.origin.recordCode,
+          origin_line_number: revenue.origin.lineNumber,
+          origin_entry_name: revenue.origin.entryName,
         })),
       );
       if (inserted.error) throw new Error(`Falha ao gravar receitas: ${inserted.error.message}`);
@@ -490,8 +505,11 @@ export class SupabaseStore implements DataStore {
           base: tax.base,
           amount: tax.amount,
           description: tax.description,
-          file_id: tax.fileId,
-          file_name: tax.fileName,
+          file_id: tax.origin.fileId,
+          file_name: tax.origin.fileName,
+          origin_record_code: tax.origin.recordCode,
+          origin_line_number: tax.origin.lineNumber,
+          origin_entry_name: tax.origin.entryName,
         })),
       );
       if (inserted.error) throw new Error(`Falha ao gravar tributos: ${inserted.error.message}`);
@@ -511,8 +529,11 @@ export class SupabaseStore implements DataStore {
           lines: declaration.lines,
           confidence: declaration.confidence,
           unresolved_fields: declaration.unresolvedFields,
-          file_id: declaration.fileId,
-          file_name: declaration.fileName,
+          file_id: declaration.origin.fileId,
+          file_name: declaration.origin.fileName,
+          origin_record_code: declaration.origin.recordCode,
+          origin_line_number: declaration.origin.lineNumber,
+          origin_entry_name: declaration.origin.entryName,
         })),
       );
       if (inserted.error) throw new Error(`Falha ao gravar declarações: ${inserted.error.message}`);
@@ -531,6 +552,11 @@ export class SupabaseStore implements DataStore {
           uf: participant.uf,
           state_registration: participant.stateRegistration,
           country_code: participant.countryCode,
+          file_id: participant.origin.fileId,
+          file_name: participant.origin.fileName,
+          origin_record_code: participant.origin.recordCode,
+          origin_line_number: participant.origin.lineNumber,
+          origin_entry_name: participant.origin.entryName,
         })),
       );
       if (inserted.error) throw new Error(`Falha ao gravar participantes: ${inserted.error.message}`);
@@ -629,6 +655,8 @@ export class SupabaseStore implements DataStore {
         value: item.value,
         source: item.source,
         file_name: item.fileName,
+        record_code: item.recordCode,
+        line_number: item.lineNumber,
         reference: item.reference,
       })),
     );
@@ -744,5 +772,97 @@ export class SupabaseStore implements DataStore {
       .select()
       .single();
     return toRuleSetting(unwrap(result, 'Falha ao salvar configuração da regra'));
+  }
+
+  async listFieldConfirmations(auditId: string): Promise<FieldConfirmation[]> {
+    const result = await this.client
+      .from('field_confirmations')
+      .select('*')
+      .eq('organization_id', this.organizationId)
+      .eq('audit_id', auditId);
+    return unwrap(result, 'Falha ao listar confirmações manuais').map(toFieldConfirmation);
+  }
+
+  async upsertFieldConfirmation(input: FieldConfirmationInput): Promise<FieldConfirmation> {
+    const existing = await this.client
+      .from('field_confirmations')
+      .select('original_value')
+      .eq('organization_id', this.organizationId)
+      .eq('file_id', input.fileId)
+      .eq('field', input.field)
+      .maybeSingle();
+    if (existing.error) {
+      throw new Error(`Falha ao consultar confirmação: ${existing.error.message}`);
+    }
+
+    const result = await this.client
+      .from('field_confirmations')
+      .upsert(
+        {
+          organization_id: this.organizationId,
+          audit_id: input.auditId,
+          file_id: input.fileId,
+          field: input.field,
+          // Preserva o valor lido originalmente pelo parser.
+          original_value:
+            (existing.data?.original_value as string | null | undefined) ?? input.originalValue,
+          confirmed_value: input.confirmedValue,
+          confirmed_by: input.confirmedBy,
+          confirmed_at: new Date().toISOString(),
+          note: input.note,
+        },
+        { onConflict: 'file_id,field' },
+      )
+      .select()
+      .single();
+    return toFieldConfirmation(unwrap(result, 'Falha ao gravar confirmação manual'));
+  }
+
+  async deleteFieldConfirmation(id: string): Promise<void> {
+    const { error } = await this.client
+      .from('field_confirmations')
+      .delete()
+      .eq('organization_id', this.organizationId)
+      .eq('id', id);
+    if (error) throw new Error(`Falha ao remover confirmação: ${error.message}`);
+  }
+
+  async listCfopRules(): Promise<CfopRule[]> {
+    const result = await this.client
+      .from('cfop_rules')
+      .select('*')
+      .eq('organization_id', this.organizationId)
+      .order('cfop', { ascending: true });
+    return unwrap(result, 'Falha ao listar a política de receita').map(toCfopRule);
+  }
+
+  async upsertCfopRule(input: CfopRuleInput): Promise<CfopRule> {
+    const result = await this.client
+      .from('cfop_rules')
+      .upsert(
+        {
+          organization_id: this.organizationId,
+          cfop: input.cfop,
+          description: input.description,
+          treatment: input.treatment,
+          reason: input.reason,
+          rule_source: input.ruleSource ?? 'CONFIGURADO',
+          updated_by: input.updatedBy,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'organization_id,cfop' },
+      )
+      .select()
+      .single();
+    return toCfopRule(unwrap(result, 'Falha ao salvar a regra de CFOP'));
+  }
+
+  async deleteCfopRule(cfop: string): Promise<void> {
+    const { error } = await this.client
+      .from('cfop_rules')
+      .delete()
+      .eq('organization_id', this.organizationId)
+      .eq('cfop', cfop);
+    if (error) throw new Error(`Falha ao remover a regra de CFOP: ${error.message}`);
   }
 }

@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { cents } from '@/lib/core/money';
 import { compareValues } from '@/lib/audit-engine/tolerance';
 import { bandFor, computeScore } from '@/lib/audit-engine/score';
-import { computeRevenueFromInvoices } from '@/lib/audit-engine/revenue';
+import { composeRevenue, policyFromRules } from '@/lib/audit-engine/revenue-composition';
 import { runAudit } from '@/lib/audit-engine';
 import { AUDIT_RULES } from '@/lib/audit-engine/rules';
-import { DEFAULT_SCORE_WEIGHTS, type AuditFinding } from '@/lib/domain/entities';
+import { DEFAULT_SCORE_WEIGHTS, type AuditFinding, type CfopRule, type CfopTreatment } from '@/lib/domain/entities';
 import { xmlInvoices } from '@/lib/normalization/dataset';
 import { buildTextPdf } from '@/lib/demo/pdf-writer';
 import {
@@ -49,6 +49,27 @@ function sale(numero: number, valorUnitario = 1000, overrides: Partial<NfeSpec> 
 }
 
 const ORG = { organizationId: 'org-1', auditId: 'audit-1' };
+
+/** Política de CFOP para os cenários de teste. */
+function cfopPolicy(entries: Readonly<Record<string, CfopTreatment>>) {
+  const rules: CfopRule[] = Object.entries(entries).map(([cfop, treatment]) => ({
+    id: `rule-${cfop}`,
+    organizationId: 'org-1',
+    cfop,
+    description: null,
+    treatment,
+    reason: null,
+    ruleSource: 'CONFIGURADO' as const,
+    updatedBy: 'teste',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  }));
+  return policyFromRules(rules);
+}
+
+/** Política que inclui todos os CFOPs usados nos cenários de faturamento. */
+const FULL_POLICY = cfopPolicy({ '5102': 'INCLUIR', '6102': 'INCLUIR', '5202': 'EXCLUIR' });
+
+
 
 function findingsByRule(findings: readonly AuditFinding[], code: string): AuditFinding[] {
   return findings.filter((finding) => finding.ruleCode === code);
@@ -124,19 +145,46 @@ describe('score de conformidade', () => {
   });
 });
 
-describe('faturamento apurado pelos documentos', () => {
-  it('considera apenas saídas e exclui documentos sem efeito fiscal', async () => {
+describe('composição explícita da receita', () => {
+  it('inclui apenas o que a política classifica e exclui documento sem efeito fiscal', async () => {
     const dataset = await datasetFrom([
       textFile('a.xml', buildNfeXml(sale(1, 1000))),
       textFile('b.xml', buildNfeXml(sale(2, 500))),
       textFile('c.xml', buildNfeXml(sale(3, 250, { cancelada: true }))),
     ]);
 
-    const revenue = computeRevenueFromInvoices(xmlInvoices(dataset));
-    expect(revenue.amount).toBe(150000);
-    expect(revenue.documentCount).toBe(2);
-    expect(revenue.excludedByStatus).toBe(1);
-    expect(revenue.description).toContain('2 documentos fiscais considerados como saída');
+    const composition = composeRevenue(xmlInvoices(dataset), FULL_POLICY);
+    expect(composition.includedAmount).toBe(150000);
+    expect(composition.included).toHaveLength(2);
+    expect(composition.excluded).toHaveLength(1);
+    expect(composition.excludedAmount).toBe(25000);
+    expect(composition.review).toHaveLength(0);
+    expect(composition.hasPendingReview).toBe(false);
+    expect(composition.excluded[0]?.reason).toContain('cancelada');
+  });
+
+  it('coloca em revisão o CFOP sem classificação, sem somar nem esconder', async () => {
+    const dataset = await datasetFrom([
+      textFile('a.xml', buildNfeXml(sale(11, 1000))),
+      textFile('b.xml', buildNfeXml(sale(12, 400))),
+    ]);
+
+    const composition = composeRevenue(xmlInvoices(dataset), cfopPolicy({}));
+    expect(composition.includedAmount).toBe(0);
+    expect(composition.review).toHaveLength(2);
+    expect(composition.reviewAmount).toBe(140000);
+    expect(composition.hasPendingReview).toBe(true);
+    expect(composition.review[0]?.reason).toContain('não classificado');
+  });
+
+  it('registra o motivo e a origem de cada documento da composição', async () => {
+    const dataset = await datasetFrom([textFile('a.xml', buildNfeXml(sale(13, 700)))]);
+    const composition = composeRevenue(xmlInvoices(dataset), FULL_POLICY);
+    const entry = composition.included[0];
+    expect(entry?.cfop).toBe('5102');
+    expect(entry?.amount).toBe(70000);
+    expect(entry?.origin.fileName).toBe('a.xml');
+    expect(entry?.origin.recordCode).toBe('infNFe');
   });
 
   it('exclui os CFOPs configurados e informa a composição', async () => {
@@ -164,13 +212,11 @@ describe('faturamento apurado pelos documentos', () => {
       ),
     ]);
 
-    const revenue = computeRevenueFromInvoices(xmlInvoices(dataset), {
-      cfopExclusions: ['5202'],
-      excludedStatuses: ['CANCELADA', 'DENEGADA', 'INUTILIZADA'],
-    });
-    expect(revenue.amount).toBe(100000);
-    expect(revenue.excludedByCfop).toBe(1);
-    expect(revenue.cfopBreakdown[0]?.cfop).toBe('5102');
+    const composition = composeRevenue(xmlInvoices(dataset), FULL_POLICY);
+    expect(composition.includedAmount).toBe(100000);
+    expect(composition.excluded).toHaveLength(1);
+    expect(composition.excluded[0]?.cfop).toBe('5202');
+    expect(composition.cfopBreakdown[0]?.cfop).toBe('5102');
   });
 });
 
@@ -310,6 +356,7 @@ describe('regras ATT-FIS (XML x EFD ICMS/IPI)', () => {
 
 describe('regras ATT-FAT (faturamento)', () => {
   const specs = [sale(201, 100000), sale(202, 200000)];
+  const WITH_POLICY = { ...ORG, revenuePolicy: FULL_POLICY };
 
   function pgdasdFile(receita: number): FixtureFile {
     return {
@@ -331,7 +378,7 @@ describe('regras ATT-FAT (faturamento)', () => {
       pgdasdFile(280000),
     ]);
 
-    const { findings } = runAudit(dataset, ORG);
+    const { findings } = runAudit(dataset, WITH_POLICY);
     const fat001 = findingsByRule(findings, 'ATT-FAT-001');
     expect(fat001).toHaveLength(1);
     expect(fat001[0]?.status).toBe('DIVERGENCIA');
@@ -342,10 +389,13 @@ describe('regras ATT-FAT (faturamento)', () => {
     expect(fat001[0]?.severity).toBe('CRITICA');
 
     const origin = fat001[0]?.evidence[0];
-    expect(origin?.origin).toContain('2 documentos XML considerados como saída');
+    expect(origin?.origin).toContain('2 documentos XML incluídos na receita');
     const target = fat001[0]?.evidence[1];
     expect(target?.origin).toContain('Receita Bruta do PA');
     expect(target?.origin).toContain('PGDAS_082026.pdf');
+
+    const composicao = fat001[0]?.evidence.find((item) => item.label.startsWith('Composição'));
+    expect(composicao?.value).toContain('2 incluídos');
   });
 
   it('ATT-FAT-001: não aponta divergência quando os valores conferem', async () => {
@@ -354,8 +404,22 @@ describe('regras ATT-FAT (faturamento)', () => {
       pgdasdFile(300000),
     ]);
 
-    const { findings } = runAudit(dataset, ORG);
+    const { findings } = runAudit(dataset, WITH_POLICY);
     expect(findingsByRule(findings, 'ATT-FAT-001')).toHaveLength(0);
+  });
+
+  it('não conclui enquanto houver CFOP aguardando classificação', async () => {
+    const dataset = await datasetFrom([
+      ...specs.map((spec, index) => textFile(`nfe-${index}.xml`, buildNfeXml(spec))),
+      pgdasdFile(280000),
+    ]);
+
+    // Sem política configurada, os documentos ficam em revisão.
+    const { findings } = runAudit(dataset, ORG);
+    const fat001 = findingsByRule(findings, 'ATT-FAT-001')[0];
+    expect(fat001?.status).toBe('NAO_VERIFICADO');
+    expect(fat001?.description).toContain('aguardam classificação de CFOP');
+    expect(fat001?.severity).toBe('INFO');
   });
 
   it('ATT-FAT-002: compara a EFD ICMS/IPI com o PGDAS-D', async () => {
@@ -373,10 +437,11 @@ describe('regras ATT-FAT (faturamento)', () => {
       pgdasdFile(250000),
     ]);
 
-    const { findings } = runAudit(dataset, ORG);
+    const { findings } = runAudit(dataset, WITH_POLICY);
     const fat002 = findingsByRule(findings, 'ATT-FAT-002');
     expect(fat002).toHaveLength(1);
     expect(fat002[0]?.difference).toBe(5000000);
+    expect(fat002[0]?.evidence[0]?.recordCode).toBe('C100');
   });
 
   it('ATT-FAT-003 e ATT-FAT-004: comparam a EFD-Contribuições', async () => {
@@ -397,16 +462,18 @@ describe('regras ATT-FAT (faturamento)', () => {
       pgdasdFile(300000),
     ]);
 
-    const { findings } = runAudit(dataset, ORG);
-    // Receita da EFD-Contribuicoes = documentos (300.000) + F100 (10.000).
+    const { findings } = runAudit(dataset, WITH_POLICY);
+    // Receita da EFD-Contribuições = documentos (300.000) + F100 (10.000).
     expect(findingsByRule(findings, 'ATT-FAT-003')[0]?.originValue).toBe(31000000);
     expect(findingsByRule(findings, 'ATT-FAT-004')[0]?.difference).toBe(-1000000);
   });
 
-  it('reporta NÃO_VERIFICADO quando o PGDAS-D não foi importado', async () => {
+  it('reporta NAO_VERIFICADO quando o PGDAS-D não foi importado', async () => {
     const dataset = await datasetFrom([textFile('nfe.xml', buildNfeXml(specs[0]!))]);
-    const { findings } = runAudit(dataset, ORG);
-    expect(findingsByRule(findings, 'ATT-FAT-001')[0]?.status).toBe('NAO_VERIFICADO');
+    const { findings } = runAudit(dataset, WITH_POLICY);
+    const fat001 = findingsByRule(findings, 'ATT-FAT-001')[0];
+    expect(fat001?.status).toBe('NAO_VERIFICADO');
+    expect(fat001?.description).toContain('Nenhum PGDAS-D foi importado');
   });
 });
 

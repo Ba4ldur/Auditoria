@@ -10,11 +10,15 @@
  */
 
 import { describeError } from '@/lib/core/result';
-import type { Audit, AuditFile, FileMessage } from '@/lib/domain/entities';
+import type { Audit, AuditFile, FileInspection, FileMessage } from '@/lib/domain/entities';
 import { buildDataset, type AuditDataset } from '@/lib/normalization/dataset';
 import { parseFile, type ParsedPayload } from '@/lib/parsers';
-import { DEFAULT_REVENUE_POLICY, runAudit, type EngineResult } from '@/lib/audit-engine';
+import { policyFromRules, runAudit, type EngineResult } from '@/lib/audit-engine';
 import { getStorage, getStore } from '@/lib/data';
+import { summariseSped } from '@/lib/parsers/sped/inspect';
+import { decodeSped } from '@/lib/parsers/sped/reader';
+import { classifyReliability, toFileParseLog } from './reliability';
+import { applyFieldConfirmations } from './confirmations';
 
 export interface ProcessOutcome {
   readonly audit: Audit;
@@ -46,14 +50,24 @@ export async function processAudit(auditId: string): Promise<ProcessOutcome> {
   let failedFiles = 0;
   let skippedFiles = 0;
 
+  const confirmations = await store.listFieldConfirmations(auditId);
+
   for (const file of files) {
+    // Arquivo de outro CNPJ nunca alimenta os cruzamentos. Um arquivo que
+    // falhou antes é reprocessado: o parser pode ter sido corrigido desde então.
     if (file.identityCheck === 'INCOMPATIVEL') {
       skippedFiles += 1;
       continue;
     }
     const result = await processSingleFile(file, storage, store);
-    if (result) payloads.push({ payload: result, fileId: file.id, fileName: file.originalName });
-    else failedFiles += 1;
+    if (!result) {
+      failedFiles += 1;
+      continue;
+    }
+    // Correções manuais atuam sobre o modelo normalizado; o arquivo original
+    // permanece intocado (requisito 11).
+    const corrected = applyFieldConfirmations(result, confirmations);
+    payloads.push({ payload: corrected, fileId: file.id, fileName: file.originalName });
   }
 
   const dataset = buildDataset({ company, competencia: audit.competencia, payloads });
@@ -74,10 +88,7 @@ export async function processAudit(auditId: string): Promise<ProcessOutcome> {
     auditId,
     settings: ruleSettings,
     scoreWeights: settings.scoreWeights,
-    revenuePolicy: {
-      ...DEFAULT_REVENUE_POLICY,
-      cfopExclusions: settings.revenueCfopExclusions,
-    },
+    revenuePolicy: policyFromRules(await store.listCfopRules()),
   });
 
   await store.replaceFindings(auditId, engine.findings);
@@ -120,13 +131,29 @@ async function processSingleFile(
 
   await store.updateFile(file.id, { status: 'PROCESSANDO' });
 
+  let bytes: Uint8Array;
   try {
-    const bytes = await storage.get(file.storagePath);
+    bytes = await storage.get(file.storagePath);
+  } catch (error) {
+    await store.updateFile(file.id, {
+      status: 'ERRO',
+      reliability: 'ERRO',
+      messages: [
+        ...file.messages,
+        { level: 'ERRO', code: 'ARQUIVO_INDISPONIVEL', message: 'Arquivo não pôde ser lido do armazenamento.', detail: describeError(error) },
+      ],
+      processedAt: new Date().toISOString(),
+    });
+    return null;
+  }
+
+  try {
     const result = await parseFile(bytes, file.originalName, file.id);
 
     if (!result.ok) {
       await store.updateFile(file.id, {
         status: 'ERRO',
+        reliability: 'ERRO',
         messages: [
           ...file.messages,
           { level: 'ERRO', code: result.error.code, message: result.error.message },
@@ -139,10 +166,28 @@ async function processSingleFile(
     const payload = result.value;
     const messages: FileMessage[] = [...file.messages, ...payload.messages];
     const hasWarnings = messages.some((message) => message.level === 'ALERTA');
+    const parseLog = toFileParseLog(payload.log);
+
+    const { reliability, reasons } = classifyReliability({
+      identityCheck: file.identityCheck,
+      failed: false,
+      log: parseLog,
+      messages,
+      declarations: payload.declarations,
+    });
+
+    for (const reason of reasons) {
+      if (messages.some((message) => message.detail === reason)) continue;
+      messages.push({ level: 'ALERTA', code: 'CONFIABILIDADE', message: reason });
+    }
 
     await store.updateFile(file.id, {
       status: hasWarnings ? 'PROCESSADO_COM_ALERTAS' : 'PROCESSADO',
       detectedSource: payload.source,
+      reliability,
+      parserVersion: payload.parserVersion,
+      parseLog,
+      inspection: inspectionFor(payload.source, bytes),
       messages,
       stats: payload.stats,
       processedAt: new Date().toISOString(),
@@ -152,6 +197,7 @@ async function processSingleFile(
   } catch (error) {
     await store.updateFile(file.id, {
       status: 'ERRO',
+      reliability: 'ERRO',
       messages: [
         ...file.messages,
         { level: 'ERRO', code: 'FALHA_PROCESSAMENTO', message: 'Falha ao processar o arquivo.', detail: describeError(error) },
@@ -160,6 +206,57 @@ async function processSingleFile(
     });
     return null;
   }
+}
+
+export interface ReprocessOutcome {
+  readonly ok: boolean;
+  readonly file: AuditFile;
+  readonly message: string;
+}
+
+/**
+ * Reinterpreta um arquivo já armazenado (requisito 13).
+ *
+ * O arquivo original é imutável: apenas a leitura é refeita, com a versão de
+ * parser vigente. Os cruzamentos só refletem a nova leitura depois que a
+ * auditoria for reprocessada, e a interface avisa isso explicitamente.
+ */
+export async function reprocessFile(fileId: string): Promise<ReprocessOutcome> {
+  const store = getStore();
+  const storage = getStorage();
+
+  const file = await store.getFile(fileId);
+  if (!file) throw new Error(`Arquivo não encontrado: ${fileId}`);
+
+  // As mensagens da importação são descartadas para que o log reflita apenas
+  // esta leitura; a identificação de CNPJ e competência é preservada.
+  await store.updateFile(fileId, { messages: [], stats: null, parseLog: null });
+  const clean = await store.getFile(fileId);
+  if (!clean) throw new Error(`Arquivo não encontrado: ${fileId}`);
+
+  const payload = await processSingleFile(clean, storage, store);
+  const updated = (await store.getFile(fileId)) ?? clean;
+
+  return {
+    ok: payload !== null,
+    file: updated,
+    message:
+      payload === null
+        ? 'O arquivo não pôde ser interpretado. Veja o log de leitura.'
+        : `Arquivo reinterpretado pelo parser versão ${updated.parserVersion ?? '—'}. ` +
+          'Reprocesse a auditoria para atualizar os cruzamentos.',
+  };
+}
+
+/** Resumo estrutural, calculado apenas para as obrigações orientadas a registro. */
+function inspectionFor(source: string, bytes: Uint8Array): FileInspection | null {
+  if (source !== 'EFD_ICMS_IPI' && source !== 'EFD_CONTRIBUICOES') return null;
+  const summary = summariseSped(decodeSped(bytes), source);
+  return {
+    totalLines: summary.totalLines,
+    totalRecords: summary.totalRecords,
+    registers: summary.registers,
+  };
 }
 
 /** Rebuilds the dataset from persisted data, without re-parsing the files. */

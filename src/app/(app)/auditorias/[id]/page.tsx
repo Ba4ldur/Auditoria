@@ -93,9 +93,14 @@ export default async function AuditPage({
               Voltar
             </LinkButton>
             {processed ? (
-              <LinkButton href={`/auditorias/${audit.id}/relatorio`} variant="primary">
-                Relatório
-              </LinkButton>
+              <>
+                <LinkButton href={`/auditorias/${audit.id}/composicao`} variant="secondary">
+                  Ver composição
+                </LinkButton>
+                <LinkButton href={`/auditorias/${audit.id}/relatorio`} variant="primary">
+                  Relatório
+                </LinkButton>
+              </>
             ) : null}
           </>
         }
@@ -216,6 +221,30 @@ export default async function AuditPage({
                 basePath={`/auditorias/${audit.id}`}
                 selectedId={selected?.id ?? null}
               />
+              <div className="flex flex-wrap gap-2 border-t border-line px-5 py-3">
+                <span className="self-center text-xs text-ink-muted">Exportar em CSV:</span>
+                <LinkButton
+                  href={`/api/auditorias/${audit.id}/exportar?tipo=divergencias`}
+                  variant="secondary"
+                  size="sm"
+                >
+                  Divergências
+                </LinkButton>
+                <LinkButton
+                  href={`/api/auditorias/${audit.id}/exportar?tipo=nao-encontrados`}
+                  variant="secondary"
+                  size="sm"
+                >
+                  Documentos não encontrados
+                </LinkButton>
+                <LinkButton
+                  href={`/api/auditorias/${audit.id}/exportar?tipo=documentos-em-revisao`}
+                  variant="secondary"
+                  size="sm"
+                >
+                  Documentos em revisão
+                </LinkButton>
+              </div>
             </Card>
 
             {selected ? (
@@ -224,6 +253,7 @@ export default async function AuditPage({
                   finding={selected}
                   comments={comments}
                   closeHref={`/auditorias/${audit.id}`}
+                  auditId={audit.id}
                 />
               </Card>
             ) : (

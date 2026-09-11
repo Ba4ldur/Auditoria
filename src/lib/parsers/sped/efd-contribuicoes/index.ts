@@ -16,6 +16,7 @@ import { onlyDigits } from '@/lib/core/cnpj';
 import { ok, type Result } from '@/lib/core/result';
 import {
   EMPTY_IDENTITY,
+  recordOrigin,
   type DocumentStatus,
   type FiscalDocumentKind,
   type Invoice,
@@ -35,7 +36,14 @@ import {
   type ContribDocument,
   type ContribState,
 } from './layout';
-import type { DetectionHint, DetectionInput, FileParser, ParsedPayload, ParserInput } from '../../types';
+import {
+  type DetectionHint,
+  type DetectionInput,
+  type FileParser,
+  type ParsedPayload,
+  type ParserInput,
+} from '../../types';
+import { EFD_CONTRIB_PARSER_VERSION } from '../../versions';
 
 const VERIFIED_VERSIONS = new Set(['005', '006']);
 
@@ -182,8 +190,12 @@ function toInvoice(
       cofins,
     },
     items,
-    fileId: context.fileId,
-    fileName: context.fileName,
+    origin: recordOrigin({
+      fileId: context.fileId,
+      fileName: context.fileName,
+      recordCode: document.register,
+      lineNumber: document.line,
+    }),
   };
 }
 
@@ -247,8 +259,12 @@ async function parseEfdContribFile(input: ParserInput): Promise<Result<ParsedPay
         `Somatório do campo VL_OPER de ${revenueOperations.length} registro(s) F100 com ` +
         `IND_OPER=${F100_REVENUE_IND_OPER} (operação representativa de receita).`,
       documentCount: revenueOperations.length,
-      fileId: input.fileId,
-      fileName: input.fileName,
+      origin: recordOrigin({
+        fileId: input.fileId,
+        fileName: input.fileName,
+        recordCode: 'F100',
+        lineNumber: revenueOperations[0]?.line ?? null,
+      }),
     });
   }
 
@@ -271,8 +287,12 @@ async function parseEfdContribFile(input: ParserInput): Promise<Result<ParsedPay
       description:
         `Registro ${register}: VL_TOT_CONT_NC_PER + VL_TOT_CONT_CUM_PER ` +
         '(contribuição apurada no período, antes de créditos, retenções e demais deduções).',
-      fileId: input.fileId,
-      fileName: input.fileName,
+      origin: recordOrigin({
+        fileId: input.fileId,
+        fileName: input.fileName,
+        recordCode: register,
+        lineNumber: data.line,
+      }),
     });
     // Amount left to collect after credits, withholdings and deductions.
     taxes.push({
@@ -284,8 +304,12 @@ async function parseEfdContribFile(input: ParserInput): Promise<Result<ParsedPay
       base: null,
       amount: data.totalToCollect,
       description: `Registro ${register}, campo VL_TOT_CONT_REC (total da contribuição a recolher no período).`,
-      fileId: input.fileId,
-      fileName: input.fileName,
+      origin: recordOrigin({
+        fileId: input.fileId,
+        fileName: input.fileName,
+        recordCode: register,
+        lineNumber: data.line,
+      }),
     });
   }
 
@@ -298,6 +322,12 @@ async function parseEfdContribFile(input: ParserInput): Promise<Result<ParsedPay
     uf: null,
     stateRegistration: participant.ie,
     countryCode: null,
+    origin: recordOrigin({
+      fileId: input.fileId,
+      fileName: input.fileName,
+      recordCode: '0150',
+      lineNumber: participant.line,
+    }),
   }));
 
   messages.push({
@@ -308,8 +338,24 @@ async function parseEfdContribFile(input: ParserInput): Promise<Result<ParsedPay
       `${state.otherOperations.length} operações F100; ${summary.unhandled.size} tipos de registro não mapeados.`,
   });
 
+  const unsupportedRecords = [...summary.unhandled.entries()]
+    .map(([code, count]) => ({ code, count }))
+    .sort((a, b) => b.count - a.count);
+
+  const unsupportedLayout =
+    state.version && !VERIFIED_VERSIONS.has(state.version)
+      ? { declaredVersion: state.version, verifiedVersions: [...VERIFIED_VERSIONS].sort() }
+      : null;
+
   return ok({
     source: 'EFD_CONTRIBUICOES',
+    parserVersion: EFD_CONTRIB_PARSER_VERSION,
+    log: {
+      warnings: messages.filter((message) => message.level === 'ALERTA'),
+      errors: messages.filter((message) => message.level === 'ERRO'),
+      unsupportedRecords,
+      unsupportedLayout,
+    },
     identity: {
       ...EMPTY_IDENTITY,
       taxId: onlyDigits(state.cnpj ?? '') || null,

@@ -17,11 +17,20 @@ import { competenciaFromDate } from '@/lib/core/competencia';
 import { isValidNfeKey, normalizeNfeKey, splitNfeKey, ufFromCode } from '@/lib/core/nfe-key';
 import { deterministicId } from '@/lib/core/hash';
 import { failWith, ok, type Result } from '@/lib/core/result';
-import { EMPTY_IDENTITY, type DocumentStatus, type Invoice, type InvoiceItem, type InvoiceTotals, type OperationDirection } from '@/lib/domain/model';
+import {
+  EMPTY_IDENTITY,
+  recordOrigin,
+  type DocumentStatus,
+  type Invoice,
+  type InvoiceItem,
+  type InvoiceTotals,
+  type OperationDirection,
+} from '@/lib/domain/model';
 import type { FileMessage } from '@/lib/domain/entities';
 import type { DataSourceKind } from '@/lib/domain/sources';
 import { asArray, attr, findText, firstChild, node, text, type XmlNode } from './node';
-import type { DetectionHint, DetectionInput, FileParser, ParsedPayload, ParserInput } from '../types';
+import { EMPTY_PARSE_LOG, type DetectionHint, type DetectionInput, type FileParser, type ParsedPayload, type ParserInput } from '../types';
+import { XML_PARSER_VERSION } from '../versions';
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -47,7 +56,7 @@ const DENIED_STATUS = new Set(['110', '301', '302', '303']);
 /** Parses a single NF-e/NFC-e XML document. */
 export function parseNfeXml(
   xml: string,
-  context: { fileId: string | null; fileName: string },
+  context: { fileId: string | null; fileName: string; entryName?: string | null },
 ): Result<NfeParseResult> {
   let tree: unknown;
   try {
@@ -135,8 +144,13 @@ export function parseNfeXml(
     cfops: cfops.all,
     totals,
     items,
-    fileId: context.fileId,
-    fileName: context.fileName,
+    origin: recordOrigin({
+      fileId: context.fileId,
+      fileName: context.fileName,
+      // O XML não é orientado a linha: o elemento lido identifica a origem.
+      recordCode: 'infNFe',
+      entryName: context.entryName ?? null,
+    }),
   };
 
   return ok({ invoice, messages });
@@ -316,6 +330,8 @@ async function parseNfeFile(input: ParserInput): Promise<Result<ParsedPayload>> 
 
   return ok({
     source: invoice.source,
+    parserVersion: XML_PARSER_VERSION,
+    log: { ...EMPTY_PARSE_LOG, warnings: messages.filter((m) => m.level === 'ALERTA') },
     identity,
     invoices: [invoice],
     revenues: [],

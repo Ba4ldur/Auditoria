@@ -21,8 +21,10 @@ import {
   type AuditComment,
   type AuditFile,
   type AuditFinding,
+  type CfopRule,
   type Company,
   type CompanyRegimeHistory,
+  type FieldConfirmation,
   type Organization,
   type OrganizationSettings,
   type RuleSetting,
@@ -30,6 +32,8 @@ import {
 import type { TaxRegime } from '@/lib/domain/model';
 import type {
   AuditFileInput,
+  CfopRuleInput,
+  FieldConfirmationInput,
   AuditFilePatch,
   AuditInput,
   AuditPatch,
@@ -56,6 +60,8 @@ interface Database {
   findings: AuditFinding[];
   comments: AuditComment[];
   ruleSettings: RuleSetting[];
+  fieldConfirmations: FieldConfirmation[];
+  cfopRules: CfopRule[];
 }
 
 function now(): string {
@@ -76,7 +82,6 @@ function emptyDatabase(): Database {
       organizationId: DEFAULT_ORGANIZATION_ID,
       scoreWeights: DEFAULT_SCORE_WEIGHTS,
       maxUploadBytes: MAX_UPLOAD_BYTES,
-      revenueCfopExclusions: [],
       updatedAt: timestamp,
     },
     companies: [],
@@ -87,6 +92,8 @@ function emptyDatabase(): Database {
     findings: [],
     comments: [],
     ruleSettings: [],
+    fieldConfirmations: [],
+    cfopRules: [],
   };
 }
 
@@ -353,9 +360,13 @@ export class LocalStore implements DataStore {
         detectedStartDate: null,
         detectedEndDate: null,
         identityCheck: 'NAO_IDENTIFICADO',
+        reliability: 'REQUER_CONFERENCIA',
         status: 'PENDENTE',
         messages: [],
         stats: null,
+        parserVersion: null,
+        parseLog: null,
+        inspection: null,
         parentFileId: null,
         uploadedAt: now(),
         processedAt: null,
@@ -501,6 +512,74 @@ export class LocalStore implements DataStore {
       if (index === -1) database.ruleSettings.push(setting);
       else database.ruleSettings[index] = setting;
       return setting;
+    });
+  }
+
+  async listFieldConfirmations(auditId: string): Promise<FieldConfirmation[]> {
+    return this.read((database) =>
+      database.fieldConfirmations.filter((entry) => entry.auditId === auditId),
+    );
+  }
+
+  async upsertFieldConfirmation(input: FieldConfirmationInput): Promise<FieldConfirmation> {
+    return this.mutate((database) => {
+      const index = database.fieldConfirmations.findIndex(
+        (entry) => entry.fileId === input.fileId && entry.field === input.field,
+      );
+      const confirmation: FieldConfirmation = {
+        id: database.fieldConfirmations[index]?.id ?? newId(),
+        organizationId: database.organization.id,
+        auditId: input.auditId,
+        fileId: input.fileId,
+        field: input.field,
+        // O valor originalmente extraído é preservado no primeiro registro.
+        originalValue: database.fieldConfirmations[index]?.originalValue ?? input.originalValue,
+        confirmedValue: input.confirmedValue,
+        confirmedBy: input.confirmedBy,
+        confirmedAt: now(),
+        note: input.note,
+      };
+      if (index === -1) database.fieldConfirmations.push(confirmation);
+      else database.fieldConfirmations[index] = confirmation;
+      return confirmation;
+    });
+  }
+
+  async deleteFieldConfirmation(id: string): Promise<void> {
+    await this.mutate((database) => {
+      database.fieldConfirmations = database.fieldConfirmations.filter((entry) => entry.id !== id);
+    });
+  }
+
+  async listCfopRules(): Promise<CfopRule[]> {
+    return this.read((database) =>
+      [...database.cfopRules].sort((a, b) => a.cfop.localeCompare(b.cfop)),
+    );
+  }
+
+  async upsertCfopRule(input: CfopRuleInput): Promise<CfopRule> {
+    return this.mutate((database) => {
+      const index = database.cfopRules.findIndex((entry) => entry.cfop === input.cfop);
+      const rule: CfopRule = {
+        id: database.cfopRules[index]?.id ?? newId(),
+        organizationId: database.organization.id,
+        cfop: input.cfop,
+        description: input.description,
+        treatment: input.treatment,
+        reason: input.reason,
+        ruleSource: input.ruleSource ?? 'CONFIGURADO',
+        updatedBy: input.updatedBy,
+        updatedAt: now(),
+      };
+      if (index === -1) database.cfopRules.push(rule);
+      else database.cfopRules[index] = rule;
+      return rule;
+    });
+  }
+
+  async deleteCfopRule(cfop: string): Promise<void> {
+    await this.mutate((database) => {
+      database.cfopRules = database.cfopRules.filter((entry) => entry.cfop !== cfop);
     });
   }
 }

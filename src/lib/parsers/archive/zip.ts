@@ -15,7 +15,8 @@ import { EMPTY_IDENTITY, type FileIdentity, type Invoice } from '@/lib/domain/mo
 import type { FileMessage, FileStats } from '@/lib/domain/entities';
 import { competenciaFromDate } from '@/lib/core/competencia';
 import { decodeXml, parseNfeXml } from '../xml/nfe';
-import type { DetectionHint, DetectionInput, FileParser, ParsedPayload, ParserInput } from '../types';
+import { EMPTY_PARSE_LOG, type DetectionHint, type DetectionInput, type FileParser, type ParsedPayload, type ParserInput } from '../types';
+import { ZIP_PARSER_VERSION } from '../versions';
 
 const MAX_ENTRIES = 50_000;
 const SUPPORTED_ENTRY = /\.xml$/i;
@@ -98,7 +99,11 @@ function walk(bytes: Uint8Array, prefix: string, depth: number, acc: ExtractionA
     }
 
     acc.found += 1;
-    const result = parseNfeXml(decodeXml(content), { fileId: null, fileName: label });
+    const result = parseNfeXml(decodeXml(content), {
+      fileId: null,
+      fileName: prefix === '' ? label : prefix,
+      entryName: label,
+    });
     if (!result.ok) {
       acc.invalid += 1;
       acc.messages.push({
@@ -164,7 +169,10 @@ async function parseZipFile(input: ParserInput): Promise<Result<ParsedPayload>> 
   if (!extraction.ok) return extraction;
 
   const { invoices, messages, stats } = extraction.value;
-  const withFile = invoices.map((invoice) => ({ ...invoice, fileId: input.fileId }));
+  const withFile = invoices.map((invoice) => ({
+    ...invoice,
+    origin: { ...invoice.origin, fileId: input.fileId, fileName: input.fileName },
+  }));
 
   const summary: FileMessage = {
     level: stats.invalid > 0 ? 'ALERTA' : 'INFO',
@@ -179,6 +187,8 @@ async function parseZipFile(input: ParserInput): Promise<Result<ParsedPayload>> 
 
   return ok({
     source: hasNfce && withFile.every((i) => i.model === '65') ? 'XML_NFCE' : 'XML_NFE',
+    parserVersion: ZIP_PARSER_VERSION,
+    log: { ...EMPTY_PARSE_LOG, warnings: messages.filter((m) => m.level === 'ALERTA') },
     identity,
     invoices: withFile,
     revenues: [],

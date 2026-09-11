@@ -60,19 +60,43 @@ export function Td({
   );
 }
 
+/**
+ * Linha de tabela. Quando recebe `onClick`, a linha passa a ser acionável
+ * também pelo teclado (Enter ou Espaço) e ganha foco visível — auditoria é
+ * trabalho de teclado, e uma linha que só responde ao mouse é inacessível.
+ */
 export function Tr({
   children,
   className,
   onClick,
+  label,
 }: {
   children: ReactNode;
   className?: string;
   onClick?: () => void;
+  /** Descrição da ação, lida por leitores de tela. */
+  label?: string;
 }) {
+  if (!onClick) {
+    return <tr className={cn('transition-colors hover:bg-navy-50/50', className)}>{children}</tr>;
+  }
+
   return (
     <tr
       onClick={onClick}
-      className={cn('transition-colors hover:bg-navy-50/50', onClick && 'cursor-pointer', className)}
+      onKeyDown={(event) => {
+        if (event.key !== 'Enter' && event.key !== ' ') return;
+        event.preventDefault();
+        onClick();
+      }}
+      role="button"
+      tabIndex={0}
+      aria-label={label}
+      className={cn(
+        'cursor-pointer transition-colors hover:bg-navy-50/50',
+        'focus-visible:outline focus-visible:-outline-offset-2 focus-visible:outline-navy-600',
+        className,
+      )}
     >
       {children}
     </tr>

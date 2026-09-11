@@ -14,6 +14,7 @@ import { onlyDigits } from '@/lib/core/cnpj';
 import { ok, type Result } from '@/lib/core/result';
 import {
   EMPTY_IDENTITY,
+  recordOrigin,
   type DocumentStatus,
   type FiscalDocumentKind,
   type Invoice,
@@ -35,7 +36,14 @@ import {
   type EfdIcmsDocument,
   type EfdIcmsState,
 } from './layout';
-import type { DetectionHint, DetectionInput, FileParser, ParsedPayload, ParserInput } from '../../types';
+import {
+  type DetectionHint,
+  type DetectionInput,
+  type FileParser,
+  type ParsedPayload,
+  type ParserInput,
+} from '../../types';
+import { EFD_ICMS_IPI_PARSER_VERSION } from '../../versions';
 
 /** Layout versions (`COD_VER`) whose field positions this mapping was written against. */
 const VERIFIED_VERSIONS = new Set(['015', '016', '017', '018', '019', '020']);
@@ -164,8 +172,12 @@ function toInvoice(
       cofins: document.vlCofins,
     },
     items,
-    fileId: context.fileId,
-    fileName: context.fileName,
+    origin: recordOrigin({
+      fileId: context.fileId,
+      fileName: context.fileName,
+      recordCode: 'C100',
+      lineNumber: document.line,
+    }),
   };
 }
 
@@ -231,8 +243,12 @@ async function parseEfdIcmsFile(input: ParserInput): Promise<Result<ParsedPayloa
       amount: apuration.vlIcmsRecolher,
       description:
         `Registro E110, campo VL_ICMS_RECOLHER do período ${apuration.dtIni ?? '?'} a ${apuration.dtFin ?? '?'}.`,
-      fileId: input.fileId,
-      fileName: input.fileName,
+      origin: recordOrigin({
+        fileId: input.fileId,
+        fileName: input.fileName,
+        recordCode: 'E110',
+        lineNumber: apuration.line,
+      }),
     });
   }
 
@@ -245,6 +261,12 @@ async function parseEfdIcmsFile(input: ParserInput): Promise<Result<ParsedPayloa
     uf: null,
     stateRegistration: participant.ie,
     countryCode: participant.codPais,
+    origin: recordOrigin({
+      fileId: input.fileId,
+      fileName: input.fileName,
+      recordCode: '0150',
+      lineNumber: participant.line,
+    }),
   }));
 
   if (summary.unhandled.size > 0) {
@@ -261,8 +283,24 @@ async function parseEfdIcmsFile(input: ParserInput): Promise<Result<ParsedPayloa
     });
   }
 
+  const unsupportedRecords = [...summary.unhandled.entries()]
+    .map(([code, count]) => ({ code, count }))
+    .sort((a, b) => b.count - a.count);
+
+  const unsupportedLayout =
+    state.version && !VERIFIED_VERSIONS.has(state.version)
+      ? { declaredVersion: state.version, verifiedVersions: [...VERIFIED_VERSIONS].sort() }
+      : null;
+
   return ok({
     source: 'EFD_ICMS_IPI',
+    parserVersion: EFD_ICMS_IPI_PARSER_VERSION,
+    log: {
+      warnings: messages.filter((message) => message.level === 'ALERTA'),
+      errors: messages.filter((message) => message.level === 'ERRO'),
+      unsupportedRecords,
+      unsupportedLayout,
+    },
     identity: {
       ...EMPTY_IDENTITY,
       taxId: onlyDigits(state.cnpj ?? state.cpf ?? '') || null,

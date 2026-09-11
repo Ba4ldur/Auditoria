@@ -144,6 +144,7 @@ export default async function FindingsPage({
               finding={selected}
               comments={comments}
               closeHref={`/divergencias?${new URLSearchParams(baseQuery)}`}
+              auditId={selected.auditId}
             />
           </Card>
         ) : (

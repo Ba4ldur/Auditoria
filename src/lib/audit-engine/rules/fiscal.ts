@@ -143,15 +143,15 @@ export const attFis001: AuditRule = {
       evidencias: [
         evidence('Chave de acesso', 'Elemento infNFe/@Id do XML', invoice.accessKey, {
           source: invoice.source,
-          fileName: invoice.fileName,
+          from: invoice.origin,
         }),
         evidence('Emissao', 'Elemento ide/dhEmi do XML', formatIsoDate(invoice.issueDate), {
           source: invoice.source,
-          fileName: invoice.fileName,
+          from: invoice.origin,
         }),
         moneyEvidence('Valor total', 'Elemento total/ICMSTot/vNF do XML', invoice.totalValue, {
           source: invoice.source,
-          fileName: invoice.fileName,
+          from: invoice.origin,
         }),
         evidence(
           'Busca na EFD',
@@ -221,11 +221,11 @@ export const attFis002: AuditRule = {
       evidencias: [
         evidence('Chave de acesso', 'Campo CHV_NFE do registro C100', invoice.accessKey, {
           source: 'EFD_ICMS_IPI',
-          fileName: invoice.fileName,
+          from: invoice.origin,
         }),
         moneyEvidence('Valor do documento', 'Campo VL_DOC do registro C100', invoice.totalValue, {
           source: 'EFD_ICMS_IPI',
-          fileName: invoice.fileName,
+          from: invoice.origin,
         }),
         evidence(
           'Busca nos XML',
@@ -300,11 +300,11 @@ function valueComparisonRule(spec: {
             evidence('Chave de acesso', 'Chave utilizada para parear os documentos', pair.key),
             moneyEvidence(spec.originLabel, spec.xmlEvidence, comparison.origin, {
               source: pair.xml.source,
-              fileName: pair.xml.fileName,
+              from: pair.xml.origin,
             }),
             moneyEvidence(spec.targetLabel, spec.efdEvidence, comparison.target, {
               source: 'EFD_ICMS_IPI',
-              fileName: pair.efd.fileName,
+              from: pair.efd.origin,
             }),
             evidence('Tolerância', 'Configuração da regra', comparison.toleranceLabel),
           ],
@@ -414,11 +414,11 @@ export const attFis006: AuditRule = {
           evidence('Chave de acesso', 'Chave utilizada para parear os documentos', pair.key),
           evidence('CFOPs no XML', 'Elemento det/prod/CFOP de cada item', pair.xml.cfops.join(', ') || null, {
             source: pair.xml.source,
-            fileName: pair.xml.fileName,
+            from: pair.xml.origin,
           }),
           evidence('CFOPs na EFD', 'Campo CFOP dos registros C170/C190', pair.efd.cfops.join(', ') || null, {
             source: 'EFD_ICMS_IPI',
-            fileName: pair.efd.fileName,
+            from: pair.efd.origin,
           }),
         ],
       });

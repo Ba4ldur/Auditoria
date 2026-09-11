@@ -81,8 +81,11 @@ export function buildDataset(input: DatasetInput): AuditDataset {
       invoicesBySourceKey.set(dedupeKey, {
         ...invoice,
         direction: resolveDirection(invoice, input.company.cnpj),
-        fileId: invoice.fileId ?? fileId,
-        fileName: invoice.fileName ?? fileName,
+        origin: {
+          ...invoice.origin,
+          fileId: invoice.origin.fileId ?? fileId,
+          fileName: invoice.origin.fileName ?? fileName,
+        },
       });
     }
 

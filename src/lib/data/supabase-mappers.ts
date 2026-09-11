@@ -14,12 +14,15 @@ import {
   type AuditComment,
   type AuditFile,
   type AuditFinding,
+  type CfopRule,
   type Company,
   type CompanyRegimeHistory,
+  type FieldConfirmation,
   type Organization,
   type OrganizationSettings,
   type RuleSetting,
 } from '@/lib/domain/entities';
+import { recordOrigin } from '@/lib/domain/model';
 import type {
   Declaration,
   Invoice,
@@ -50,6 +53,17 @@ function nullableNum(row: Row, key: string): number | null {
   return value === null || value === undefined ? null : Number(value);
 }
 
+export /** Reconstrói a origem a partir das colunas `origin_*` da linha. */
+function toOrigin(row: Row) {
+  return recordOrigin({
+    fileId: nullableStr(row, 'file_id'),
+    fileName: nullableStr(row, 'file_name'),
+    recordCode: nullableStr(row, 'origin_record_code'),
+    lineNumber: nullableNum(row, 'origin_line_number'),
+    entryName: nullableStr(row, 'origin_entry_name'),
+  });
+}
+
 export function toOrganization(row: Row): Organization {
   return {
     id: str(row, 'id'),
@@ -65,7 +79,6 @@ export function toSettings(row: Row): OrganizationSettings {
     organizationId: str(row, 'organization_id'),
     scoreWeights: (row.score_weights as OrganizationSettings['scoreWeights']) ?? DEFAULT_SCORE_WEIGHTS,
     maxUploadBytes: num(row, 'max_upload_bytes') || MAX_UPLOAD_BYTES,
-    revenueCfopExclusions: (row.revenue_cfop_exclusions as string[]) ?? [],
     updatedAt: str(row, 'updated_at'),
   };
 }
@@ -136,9 +149,13 @@ export function toAuditFile(row: Row): AuditFile {
     detectedStartDate: nullableStr(row, 'detected_start_date'),
     detectedEndDate: nullableStr(row, 'detected_end_date'),
     identityCheck: (str(row, 'identity_check') || 'NAO_IDENTIFICADO') as AuditFile['identityCheck'],
+    reliability: (str(row, 'reliability') || 'REQUER_CONFERENCIA') as AuditFile['reliability'],
     status: (str(row, 'status') || 'PENDENTE') as AuditFile['status'],
     messages: (row.messages as AuditFile['messages']) ?? [],
     stats: (row.stats as AuditFile['stats']) ?? null,
+    parserVersion: nullableStr(row, 'parser_version'),
+    parseLog: (row.parse_log as AuditFile['parseLog']) ?? null,
+    inspection: (row.inspection as AuditFile['inspection']) ?? null,
     parentFileId: nullableStr(row, 'parent_file_id'),
     uploadedAt: str(row, 'uploaded_at'),
     processedAt: nullableStr(row, 'processed_at'),
@@ -174,8 +191,7 @@ export function toInvoice(row: Row): Invoice {
     cfops: (row.cfops as string[]) ?? [],
     totals: row.totals as Invoice['totals'],
     items: items as Invoice['items'],
-    fileId: nullableStr(row, 'file_id'),
-    fileName: nullableStr(row, 'file_name'),
+    origin: toOrigin(row),
   };
 }
 
@@ -188,8 +204,7 @@ export function toRevenueRecord(row: Row): RevenueRecord {
     amount: cents(num(row, 'amount')),
     description: str(row, 'description'),
     documentCount: nullableNum(row, 'document_count'),
-    fileId: nullableStr(row, 'file_id'),
-    fileName: nullableStr(row, 'file_name'),
+    origin: toOrigin(row),
   };
 }
 
@@ -203,8 +218,7 @@ export function toTaxRecord(row: Row): TaxRecord {
     base: toCents(nullableNum(row, 'base')),
     amount: cents(num(row, 'amount')),
     description: str(row, 'description'),
-    fileId: nullableStr(row, 'file_id'),
-    fileName: nullableStr(row, 'file_name'),
+    origin: toOrigin(row),
   };
 }
 
@@ -219,8 +233,7 @@ export function toDeclaration(row: Row): Declaration {
     lines: (row.lines as Declaration['lines']) ?? [],
     confidence: str(row, 'confidence') as Declaration['confidence'],
     unresolvedFields: (row.unresolved_fields as string[]) ?? [],
-    fileId: nullableStr(row, 'file_id'),
-    fileName: nullableStr(row, 'file_name'),
+    origin: toOrigin(row),
   };
 }
 
@@ -234,6 +247,7 @@ export function toParticipant(row: Row): ParticipantRecord {
     uf: nullableStr(row, 'uf'),
     stateRegistration: nullableStr(row, 'state_registration'),
     countryCode: nullableStr(row, 'country_code'),
+    origin: toOrigin(row),
   };
 }
 
@@ -245,6 +259,8 @@ export function toFinding(row: Row): AuditFinding {
     value: nullableStr(item, 'value'),
     source: (nullableStr(item, 'source') as AuditFinding['evidence'][number]['source']) ?? null,
     fileName: nullableStr(item, 'file_name'),
+    recordCode: nullableStr(item, 'record_code'),
+    lineNumber: nullableNum(item, 'line_number'),
     reference: nullableStr(item, 'reference'),
   }));
 
@@ -289,6 +305,35 @@ export function toComment(row: Row): AuditComment {
     author: str(row, 'author'),
     body: str(row, 'body'),
     createdAt: str(row, 'created_at'),
+  };
+}
+
+export function toFieldConfirmation(row: Row): FieldConfirmation {
+  return {
+    id: str(row, 'id'),
+    organizationId: str(row, 'organization_id'),
+    auditId: str(row, 'audit_id'),
+    fileId: str(row, 'file_id'),
+    field: str(row, 'field'),
+    originalValue: nullableStr(row, 'original_value'),
+    confirmedValue: str(row, 'confirmed_value'),
+    confirmedBy: str(row, 'confirmed_by'),
+    confirmedAt: str(row, 'confirmed_at'),
+    note: nullableStr(row, 'note'),
+  };
+}
+
+export function toCfopRule(row: Row): CfopRule {
+  return {
+    id: str(row, 'id'),
+    organizationId: str(row, 'organization_id'),
+    cfop: str(row, 'cfop'),
+    description: nullableStr(row, 'description'),
+    treatment: str(row, 'treatment') as CfopRule['treatment'],
+    reason: nullableStr(row, 'reason'),
+    ruleSource: (str(row, 'rule_source') || 'CONFIGURADO') as CfopRule['ruleSource'],
+    updatedBy: nullableStr(row, 'updated_by'),
+    updatedAt: str(row, 'updated_at'),
   };
 }
 

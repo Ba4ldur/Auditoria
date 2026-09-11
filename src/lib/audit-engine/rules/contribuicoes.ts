@@ -125,11 +125,11 @@ function contributionRule(spec: ContributionRuleSpec): AuditRule {
           `${spec.tax} nos documentos`,
           `Somatório de ${spec.tax} de ${documents.length} documento(s) de saída escriturados na EFD-Contribuições.`,
           fromDocuments,
-          { source: 'EFD_CONTRIBUICOES', fileName: documents[0]?.fileName ?? null },
+          { source: 'EFD_CONTRIBUICOES', from: documents[0]?.origin ?? null },
         ),
         moneyEvidence(`${spec.tax} apurado no período`, assessed.description, assessed.amount, {
           source: 'EFD_CONTRIBUICOES',
-          fileName: assessed.fileName,
+          from: assessed.origin,
         }),
         evidence('Tolerância', 'Configuração da regra', comparison.toleranceLabel),
       ];

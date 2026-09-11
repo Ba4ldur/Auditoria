@@ -2,25 +2,35 @@
 
 import { formatBRL, type Cents } from '@/lib/core/money';
 import { formatIsoDate } from '@/lib/core/dates';
-import type { Invoice } from '@/lib/domain/model';
+import type { Invoice, RecordOrigin } from '@/lib/domain/model';
 import type { FindingEvidence } from '@/lib/domain/entities';
 import type { DataSourceKind } from '@/lib/domain/sources';
 import type { AuditDataset } from '@/lib/normalization/dataset';
 
 export type EvidenceDraft = Omit<FindingEvidence, 'id'>;
 
+export interface EvidenceOptions {
+  readonly source?: DataSourceKind | null;
+  /** Origem completa do valor; preenche arquivo, registro e linha de uma vez. */
+  readonly from?: RecordOrigin | null;
+  readonly fileName?: string | null;
+  readonly reference?: string | null;
+}
+
 export function evidence(
   label: string,
   origin: string,
   value: string | null,
-  options: { source?: DataSourceKind | null; fileName?: string | null; reference?: string | null } = {},
+  options: EvidenceOptions = {},
 ): EvidenceDraft {
   return {
     label,
     origin,
     value,
     source: options.source ?? null,
-    fileName: options.fileName ?? null,
+    fileName: options.fileName ?? options.from?.entryName ?? options.from?.fileName ?? null,
+    recordCode: options.from?.recordCode ?? null,
+    lineNumber: options.from?.lineNumber ?? null,
     reference: options.reference ?? null,
   };
 }
@@ -29,7 +39,7 @@ export function moneyEvidence(
   label: string,
   origin: string,
   amount: Cents,
-  options: { source?: DataSourceKind | null; fileName?: string | null; reference?: string | null } = {},
+  options: EvidenceOptions = {},
 ): EvidenceDraft {
   return evidence(label, origin, formatBRL(amount), options);
 }

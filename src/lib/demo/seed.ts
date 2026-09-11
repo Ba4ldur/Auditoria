@@ -236,6 +236,41 @@ export interface SeedResult {
   readonly alreadyExisted: boolean;
 }
 
+/**
+ * Classificação de CFOP da base de demonstração.
+ *
+ * Marcada como DEMONSTRACAO justamente para não virar padrão de cliente real
+ * (requisito 23): serve só para que a demonstração exercite as regras de
+ * faturamento. Em produção, o padrão continua sendo REVISAR até que a
+ * organização configure sua própria Política de Receita.
+ */
+const DEMO_CFOP_RULES = [
+  {
+    cfop: '5102',
+    description: 'Venda de mercadoria adquirida de terceiros — dentro do estado',
+    treatment: 'INCLUIR' as const,
+    reason: 'Classificação da base de demonstração, apenas para exercitar a interface.',
+  },
+  {
+    cfop: '6102',
+    description: 'Venda de mercadoria adquirida de terceiros — fora do estado',
+    treatment: 'INCLUIR' as const,
+    reason: 'Classificação da base de demonstração, apenas para exercitar a interface.',
+  },
+  {
+    cfop: '5405',
+    description: 'Venda de mercadoria sujeita a substituição tributária',
+    treatment: 'INCLUIR' as const,
+    reason: 'Classificação da base de demonstração, apenas para exercitar a interface.',
+  },
+  {
+    cfop: '1102',
+    description: 'Compra para comercialização',
+    treatment: 'EXCLUIR' as const,
+    reason: 'Operação de entrada; não compõe faturamento.',
+  },
+];
+
 export async function seedDemoData(): Promise<SeedResult> {
   const store = getStore();
 
@@ -257,6 +292,19 @@ export async function seedDemoData(): Promise<SeedResult> {
       validFrom: makeCompetencia(2026, 1),
       validTo: null,
       note: 'Regime informado no cadastro de demonstração.',
+    });
+  }
+
+  // Política de demonstração: sem ela os documentos ficariam em revisão e as
+  // regras de faturamento não teriam o que comparar.
+  for (const rule of DEMO_CFOP_RULES) {
+    await store.upsertCfopRule({
+      cfop: rule.cfop,
+      description: rule.description,
+      treatment: rule.treatment,
+      reason: rule.reason,
+      ruleSource: 'DEMONSTRACAO',
+      updatedBy: 'Base de demonstração',
     });
   }
 

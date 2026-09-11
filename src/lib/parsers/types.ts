@@ -27,8 +27,37 @@ export interface ParserInput {
   readonly fileId: string;
 }
 
+/**
+ * Registro estruturado do que o parser encontrou e do que não soube tratar
+ * (fase 2, requisito 15). Nada aqui é escondido da interface.
+ */
+export interface ParseLog {
+  readonly warnings: readonly FileMessage[];
+  readonly errors: readonly FileMessage[];
+  /** Registros presentes no arquivo e não mapeados por este parser. */
+  readonly unsupportedRecords: readonly { code: string; count: number }[];
+  /** Preenchido quando o leiaute declarado não consta na lista verificada. */
+  readonly unsupportedLayout: UnsupportedLayout | null;
+}
+
+export interface UnsupportedLayout {
+  /** Versão declarada pelo arquivo (campo COD_VER do registro 0000). */
+  readonly declaredVersion: string | null;
+  readonly verifiedVersions: readonly string[];
+}
+
+export const EMPTY_PARSE_LOG: ParseLog = Object.freeze({
+  warnings: [],
+  errors: [],
+  unsupportedRecords: [],
+  unsupportedLayout: null,
+});
+
 export interface ParsedPayload {
   readonly source: DataSourceKind;
+  /** Versão do parser que produziu este resultado. */
+  readonly parserVersion: string;
+  readonly log: ParseLog;
   readonly identity: FileIdentity;
   readonly invoices: readonly Invoice[];
   readonly revenues: readonly RevenueRecord[];
@@ -71,9 +100,15 @@ export interface DetectionInput {
   readonly bytes: Uint8Array;
 }
 
-export function emptyPayload(source: DataSourceKind, identity: FileIdentity): ParsedPayload {
+export function emptyPayload(
+  source: DataSourceKind,
+  identity: FileIdentity,
+  parserVersion: string,
+): ParsedPayload {
   return {
     source,
+    parserVersion,
+    log: EMPTY_PARSE_LOG,
     identity,
     invoices: [],
     revenues: [],

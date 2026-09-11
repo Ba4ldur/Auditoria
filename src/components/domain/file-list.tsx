@@ -1,8 +1,14 @@
 import Link from 'next/link';
-import { AlertTriangle, CheckCircle2, CircleDashed, Info, Loader2, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, CircleDashed, Info, Loader2, ScanSearch, XCircle } from 'lucide-react';
 import { formatCnpj } from '@/lib/core/cnpj';
 import { formatCompetencia, isCompetencia } from '@/lib/core/competencia';
-import { FILE_STATUS_LABELS, type AuditFile, type FileProcessingStatus } from '@/lib/domain/entities';
+import {
+  FILE_STATUS_LABELS,
+  RELIABILITY_LABELS,
+  type AuditFile,
+  type FileProcessingStatus,
+  type FileReliability,
+} from '@/lib/domain/entities';
 import { sourceShortLabel } from '@/lib/domain/sources';
 import { Badge } from '@/components/ui/badge';
 import { EmptyRow, TableWrapper, Td, Th, Tr } from '@/components/ui/table';
@@ -13,6 +19,14 @@ const STATUS_TONES: Record<FileProcessingStatus, 'muted' | 'info' | 'success' | 
   PROCESSANDO: 'info',
   PROCESSADO: 'success',
   PROCESSADO_COM_ALERTAS: 'warning',
+  ERRO: 'danger',
+};
+
+const RELIABILITY_TONES: Record<FileReliability, 'success' | 'warning' | 'danger' | 'muted'> = {
+  VALIDADO: 'success',
+  VALIDADO_COM_ALERTAS: 'warning',
+  REQUER_CONFERENCIA: 'warning',
+  INCOMPATIVEL: 'danger',
   ERRO: 'danger',
 };
 
@@ -30,6 +44,7 @@ export function FileList({ auditId, files }: { auditId: string; files: readonly 
           <Th>Arquivo</Th>
           <Th>Tipo identificado</Th>
           <Th>CNPJ / Competência</Th>
+          <Th>Confiabilidade</Th>
           <Th>Situação</Th>
           <Th align="right">Registros</Th>
           <Th align="center">Ações</Th>
@@ -37,13 +52,13 @@ export function FileList({ auditId, files }: { auditId: string; files: readonly 
       </thead>
       <tbody>
         {files.length === 0 ? (
-          <EmptyRow colSpan={6}>Nenhum arquivo importado nesta auditoria.</EmptyRow>
+          <EmptyRow colSpan={7}>Nenhum arquivo importado nesta auditoria.</EmptyRow>
         ) : (
           files.map((file) => (
             <Tr key={file.id} className="align-top">
               <Td>
                 <Link
-                  href={`/api/arquivos/${file.id}`}
+                  href={`/arquivos/${file.id}`}
                   className="font-medium break-all text-navy-700 hover:underline"
                 >
                   {file.originalName}
@@ -72,6 +87,16 @@ export function FileList({ auditId, files }: { auditId: string; files: readonly 
                   <Badge tone="danger" className="mt-1">
                     Arquivo incompatível
                   </Badge>
+                ) : null}
+              </Td>
+              <Td>
+                <Badge tone={RELIABILITY_TONES[file.reliability]}>
+                  {RELIABILITY_LABELS[file.reliability]}
+                </Badge>
+                {file.parserVersion ? (
+                  <span className="mt-1 block font-mono text-[0.625rem] text-ink-subtle">
+                    parser {file.parserVersion}
+                  </span>
                 ) : null}
               </Td>
               <Td>
@@ -107,7 +132,17 @@ export function FileList({ auditId, files }: { auditId: string; files: readonly 
                 )}
               </Td>
               <Td align="center">
-                <DeleteFileButton auditId={auditId} fileId={file.id} />
+                <div className="flex items-center justify-center gap-1">
+                  <Link
+                    href={`/arquivos/${file.id}`}
+                    title="Validar arquivo"
+                    aria-label="Validar arquivo"
+                    className="rounded-md p-1.5 text-navy-600 transition-colors hover:bg-navy-50"
+                  >
+                    <ScanSearch size={15} aria-hidden />
+                  </Link>
+                  <DeleteFileButton auditId={auditId} fileId={file.id} />
+                </div>
               </Td>
             </Tr>
           ))

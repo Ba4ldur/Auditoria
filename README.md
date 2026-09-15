@@ -645,51 +645,74 @@ O que fica de fora nunca fica em silêncio: cada conjunto excluído vira uma
 ocorrência agregada com a contagem, uma amostra de chaves e a razão da exclusão.
 Não verificar não é conformidade.
 
-### Composição do total no período de transição (ATT-FIS-003)
+### Composição do total por exercício (ATT-FIS-003)
 
-Até 2025, comparar `vNF` do XML com `VL_DOC` do C100 é comparar duas expressões
-do mesmo número. Com IBS, CBS e Imposto Seletivo em vigor, deixa de ser: se um
-lado computa os novos tributos no total e o outro não, a diferença aritmética é
-diferença de composição, não erro de escrituração.
+**Base normativa:** Guia Prático da EFD ICMS/IPI, versão 3.2.2 (atualização de
+11/02/2026), Seção 10 — Informações sobre a Reforma Tributária sobre o Consumo.
+Como regra, CBS, IBS e IS são considerados na escrituração do valor total do
+documento fiscal; **há exceção específica para o exercício de 2026**, em que
+esses tributos **não integram o `VL_DOC` do C100**. Eles também **não integram o
+`VL_OPR` do C190**.
 
-A regra passa a apurar **duas leituras** e só conclui quando as duas divergem:
+#### Os dois totais da NF-e não são sinônimos
 
-| Situação do documento | O que a regra faz | Resultado quando há diferença |
+| Campo | O que é |
+| --- | --- |
+| `total/ICMSTot/vNF` | Total do documento **sem** IBS, CBS e IS |
+| `total/vNFTot` | "Valor total da NF-e **com** IBS / CBS / IS" (leiaute RTC) |
+
+Confundi-los produziria divergência em todo documento de 2026 que tenha os novos
+tributos, no valor exato da soma deles. Os dois são lidos, preservados no modelo
+normalizado em campos distintos e exibidos na evidência — mas **qual deles é o
+comparável é decisão do regime do exercício**, nunca da disponibilidade do campo.
+
+#### Regimes por vigência
+
+A regra não é uma heurística que tenta uma leitura e depois outra. Cada exercício
+tem um regime identificado, com critério e fonte declarados em
+`src/lib/audit-engine/reform-transition.ts`:
+
+| Exercício | Regime | Valor comparável com `VL_DOC` |
 | --- | --- | --- |
-| Exercício anterior a `REFORM_TRANSITION_YEAR` | Compara `vNF` com `VL_DOC` | `DIVERGENCIA` / `FATO` |
-| Exercício de transição, XML declara IBS/CBS/IS | Calcula `vNF − IBS − CBS − IS` e compara as duas leituras | `DIVERGENCIA` / `FATO` **somente se ambas divergirem** |
-| Exercício de transição, XML não declara os grupos | Compara pelo total bruto | `ALERTA` / `INDICIO`, nunca divergência |
+| Até 2025 | `SEM_REFORMA` | `vNF` — os tributos não existiam |
+| 2026 | `EXCLUSAO_2026` | `vNF`. O `vNFTot` é lido, exibido e **explicitamente excluído** da comparação |
+| 2027 em diante | `INTEGRACAO_RTC` | `vNFTot`; na falta dele, `vNF + vIBS + vCBS + vIS` |
+| Sem regime declarado | `SEM_REGRA_DEFINIDA` | Não compara: `NAO_VERIFICADO` com o exercício na evidência |
 
-A evidência mostra a conta inteira, na ordem em que se confere:
+Acrescentar um exercício é acrescentar uma entrada em `COMPOSITION_REGIMES` —
+nenhuma regra de auditoria muda. O regime aplicado e a fonte que o sustenta vão
+para a evidência da ocorrência, de modo que se saiba, meses depois, sob qual
+critério ela foi produzida.
+
+#### Quando o sistema não conclui
+
+- Regime conhecido mas documento sem os campos que ele exige (2027 sem `vNFTot`
+  nem parcelas): `ALERTA` / `INDICIO`.
+- Exercício sem regime declarado, ou exercício indeterminado: `NAO_VERIFICADO`,
+  em ocorrência agregada que nomeia os exercícios.
+- Nenhuma composição é inventada: o parser procura `vIBS`, `vCBS`, `vIS` e
+  `vNFTot` pelo nome do elemento e registra em `Elementos lidos do XML` o que
+  encontrou. Ausência é `null`, nunca zero presumido.
+
+#### Evidência
 
 ```
-vNF original        R$ 1.000,00     total/ICMSTot/vNF
-(-) IBS             R$     1,00     vIBS
-(-) CBS             R$     9,00     vCBS
-(-) IS              R$     5,00     vIS
-valor comparável    R$   985,00
-VL_DOC              R$   600,00     VL_DOC
+Exercício                        2026                 ide/dhEmi
+vNF                              R$ 1.000,00          total/ICMSTot/vNF
+vNFTot                           R$ 1.015,00 — fora da comparação neste exercício
+IBS                              R$     1,00          vIBS
+CBS                              R$     9,00          vCBS
+IS                               R$     5,00          vIS
+Regra de composição aplicada     Exercício de 2026 — exclusão dos tributos da reforma
+Valor comparável                 R$ 1.000,00 (de total/ICMSTot/vNF)
+C100.VL_DOC                      R$   600,00          VL_DOC
+Diferença                        R$   400,00
+Tolerância aplicada              absoluta R$ 0,05
+Fonte normativa                  Guia Prático 3.2.2 (11/02/2026), Seção 10
 ```
 
-Quatro decisões de projeto sustentam isso:
-
-- **Nada é inventado.** O parser procura os elementos `vIBS`, `vCBS` e `vIS`
-  pelo nome, dentro do grupo de totais, e registra em `Elementos lidos do XML`
-  exatamente o que encontrou. Elemento ausente é `null`, não zero.
-- **Ausência não é zero.** `reformTaxes: null` significa "a fonte não declarou".
-  É essa distinção que sustenta a recusa em concluir.
-- **O ano é parâmetro, não regra embutida.** `REFORM_TRANSITION_YEAR`, em
-  `src/lib/audit-engine/reform-transition.ts`.
-- **O sistema não decide o tratamento.** Qual composição a legislação exige para
-  o `VL_DOC` é matéria do Guia Prático da EFD ICMS/IPI em vigor, e a regra
-  declara isso nas suas `limitacoes`. Ela apresenta as duas leituras e a conta;
-  a conclusão é de profissional habilitado.
-
-> **A confirmar antes da validação em produção.** O tratamento de IBS, CBS e IS
-> no `VL_DOC` do C100 e os nomes exatos dos elementos no leiaute da NF-e em vigor
-> precisam ser conferidos contra o Guia Prático e a Nota Técnica aplicáveis. A
-> implementação é conservadora por construção — na dúvida, não conclui — mas a
-> conferência normativa não foi feita e não é suprida por ela.
+O sistema aplica o critério do Guia Prático e o declara. A conclusão sobre o
+tratamento tributário da operação continua dependendo de profissional habilitado.
 
 ### Ressalvas
 
@@ -932,13 +955,19 @@ variáveis de ambiente do provedor.
   confronta as duas fontes, mas só há correspondência inequívoca nesses dois
   estados. Denegação, inutilização e situação não declarada saem como indício, e
   a regra não determina qual das fontes está correta.
-- **Composição do `VL_DOC` na transição não está confirmada em fonte oficial.**
-  Ver a advertência em *Composição do total no período de transição*. A regra é
-  conservadora — na dúvida não conclui —, mas a conferência normativa contra o
-  Guia Prático e a Nota Técnica em vigor continua pendente.
 - **IBS, CBS e IS não são lidos da EFD.** O leiaute do C100 mapeado por este
   parser não possui campos para eles, e `reformTaxes` do lado da escrituração é
-  sempre nulo. A verificação de composição usa apenas o que o XML declara.
+  sempre nulo. A composição do valor comparável usa apenas o que o XML declara,
+  e o `VL_DOC` entra como o número escriturado, sem decomposição.
+- **`VL_OPR` do C190 não é comparado.** O Guia Prático 3.2.2 determina que CBS,
+  IBS e IS não integram esse campo. O sistema lê o `VL_OPR` apenas para apurar o
+  CFOP predominante (`ATT-FIS-006`); não há regra que confronte o valor da
+  operação analítica com o documento. É uma conferência a acrescentar.
+- **Regimes de composição posteriores a 2026 seguem a regra geral do Guia
+  3.2.2.** `INTEGRACAO_RTC` vale de 2027 em diante e deve ser reconferido contra
+  o Guia Prático de cada exercício quando publicado. Enquanto o regime existir e
+  o documento trouxer os campos, a regra conclui; se o exercício deixar de ter
+  regime declarado, ela reporta `NAO_VERIFICADO` em vez de arbitrar.
 - **Confirmação manual restrita ao PGDAS-D.** Os campos confirmáveis são
   competência, receita bruta do período, RBT12 e total devido. XML e SPED não
   têm correção manual: são arquivos estruturados cuja divergência de leitura

@@ -188,6 +188,16 @@ export interface ReformTaxTotals {
   readonly cbs: Cents | null;
   readonly is: Cents | null;
   /**
+   * `vNFTot` — valor total da NF-e **com** IBS, CBS e IS, campo próprio do
+   * leiaute RTC da NF-e.
+   *
+   * **Não é sinônimo de `totals.total` (`vNF`).** São dois totais diferentes do
+   * mesmo documento, e confundi-los produz divergência em todo documento que
+   * tenha os novos tributos. Qual deles é comparável com o `VL_DOC` escriturado
+   * depende do exercício, e é decidido em `reform-transition.ts`, não aqui.
+   */
+  readonly totalWithReformTaxes: Cents | null;
+  /**
    * Elementos efetivamente encontrados no arquivo, na forma `elemento=valor`.
    * Vai para a evidência: o sistema afirma o que leu, não o que esperava ler.
    */

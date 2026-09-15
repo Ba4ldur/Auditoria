@@ -1,72 +1,166 @@
 /**
- * Composição do valor total do documento no período de transição da reforma
- * tributária (Emenda Constitucional 132/2023).
+ * Composição do valor total do documento fiscal, por exercício.
  *
- * # Por que este módulo existe
+ * # Base normativa
  *
- * Até 2025, comparar `vNF` do XML com `VL_DOC` do registro C100 é comparar duas
- * expressões do mesmo número. A partir da entrada em vigor do IBS, da CBS e do
- * Imposto Seletivo, deixa de ser: se um dos lados computa os novos tributos no
- * total e o outro não, a diferença aritmética não é erro de escrituração — é
- * diferença de composição.
+ * Guia Prático da EFD ICMS/IPI, versão 3.2.2 (atualização de 11/02/2026),
+ * Seção 10 — Informações sobre a Reforma Tributária sobre o Consumo:
  *
- * # O que este módulo NÃO faz
+ *  - como regra, CBS, IBS e IS **são considerados** na escrituração do valor
+ *    total do documento fiscal;
+ *  - há **exceção específica para o exercício de 2026**, em que esses tributos
+ *    **não integram** o `VL_DOC` do registro C100;
+ *  - CBS, IBS e IS **não integram** o `VL_OPR` do registro C190.
  *
- * Não afirma qual é a composição correta. O tratamento dos novos tributos no
- * `VL_DOC` é matéria do Guia Prático da EFD ICMS/IPI em vigor para o exercício,
- * e **esta implementação não constitui orientação sobre esse ponto**: ela apura
- * as duas leituras possíveis a partir do que o arquivo declara, mostra a
- * composição usada e recusa-se a concluir quando a informação não basta.
+ * # Por que a regra é por vigência, e não um parâmetro só
  *
- * O ano de transição é uma constante parametrizável, e não uma regra de direito
- * embutida no código: `REFORM_TRANSITION_YEAR` pode ser ajustado sem tocar na
- * lógica de comparação.
+ * A composição do `VL_DOC` muda de exercício para exercício, e cada mudança tem
+ * base normativa própria. Um único sinalizador "é ou não é da reforma"
+ * obrigaria a reescrever a regra a cada alteração e apagaria a rastreabilidade
+ * do critério: meses depois, ninguém saberia dizer sob qual leitura uma
+ * ocorrência arquivada foi produzida.
  *
- * # Consequência prática
+ * Aqui cada exercício tem um **regime** identificado, descrito e com fonte
+ * declarada. O regime escolhido vai para a evidência da ocorrência, junto com a
+ * fonte que o sustenta. Acrescentar um exercício é acrescentar uma entrada em
+ * `COMPOSITION_REGIMES` — nenhuma regra de auditoria muda.
  *
- * - Documento anterior à transição: composição irrelevante, comparação direta.
- * - Documento na transição com os grupos declarados no XML: o sistema calcula o
- *   valor comparável, compara as duas leituras e só afirma divergência quando
- *   **ambas** divergem.
- * - Documento na transição sem os grupos no XML: a composição não pode ser
- *   determinada, e uma diferença sai como indício, nunca como divergência.
+ * # Os dois totais da NF-e
+ *
+ * O leiaute RTC da NF-e tem dois campos de total, que **não são sinônimos**:
+ *
+ *  - `vNF` — total do documento sem IBS, CBS e IS;
+ *  - `vNFTot` — "valor total da NF-e com IBS / CBS / IS".
+ *
+ * Comparar `vNFTot` com o `VL_DOC` de 2026 acusaria divergência em todo
+ * documento que tenha os novos tributos, porque o `VL_DOC` daquele exercício,
+ * por determinação do Guia Prático, não os inclui. É o regime do exercício que
+ * decide qual total é o comparável — nunca a disponibilidade do campo.
  */
 
 import { ZERO, addCents, formatBRL, subCents, type Cents } from '@/lib/core/money';
 import type { Invoice } from '@/lib/domain/model';
 
-/**
- * Primeiro exercício em que a composição do total do documento deixa de ser
- * presumida equivalente entre XML e escrituração.
- *
- * Parametrizado de propósito: se a data de referência mudar, muda aqui, sem
- * reescrever regra nenhuma.
- */
+/** Fonte normativa dos regimes de 2026 em diante. */
+export const GUIA_PRATICO_322 =
+  'Guia Prático da EFD ICMS/IPI, versão 3.2.2 (11/02/2026), Seção 10 — Informações sobre a Reforma ' +
+  'Tributária sobre o Consumo.';
+
+/** Primeiro exercício alcançado pela reforma na escrituração. */
 export const REFORM_TRANSITION_YEAR = 2026;
 
+export type CompositionRegimeId =
+  /** Exercício anterior à reforma: só existe o total tradicional. */
+  | 'SEM_REFORMA'
+  /** Exercício de 2026: CBS, IBS e IS não integram o `VL_DOC`. */
+  | 'EXCLUSAO_2026'
+  /** Regra geral: CBS, IBS e IS integram o valor total escriturado. */
+  | 'INTEGRACAO_RTC'
+  /** Exercício sem regra declarada nesta versão do sistema. */
+  | 'SEM_REGRA_DEFINIDA';
+
+export interface CompositionRegime {
+  readonly id: CompositionRegimeId;
+  /** Exercício inicial de vigência, inclusive. */
+  readonly from: number;
+  /** Exercício final de vigência, inclusive; nulo enquanto em aberto. */
+  readonly to: number | null;
+  readonly nome: string;
+  /** O que o regime determina sobre a composição do `VL_DOC`. */
+  readonly criterio: string;
+  readonly fonte: string;
+}
+
+/**
+ * Regimes conhecidos, do mais antigo ao mais recente.
+ *
+ * A ordem importa apenas para leitura: a seleção é por faixa de exercício.
+ */
+export const COMPOSITION_REGIMES: readonly CompositionRegime[] = [
+  {
+    id: 'SEM_REFORMA',
+    from: Number.NEGATIVE_INFINITY,
+    to: REFORM_TRANSITION_YEAR - 1,
+    nome: 'Anterior à reforma',
+    criterio:
+      'IBS, CBS e Imposto Seletivo não existem na escrituração do exercício. O valor total do documento no XML é ' +
+      'comparado diretamente com o VL_DOC escriturado.',
+    fonte: 'Leiaute da EFD ICMS/IPI anterior à Seção 10 do Guia Prático.',
+  },
+  {
+    id: 'EXCLUSAO_2026',
+    from: 2026,
+    to: 2026,
+    nome: 'Exercício de 2026 — exclusão dos tributos da reforma',
+    criterio:
+      'No exercício de 2026, CBS, IBS e Imposto Seletivo NÃO integram o VL_DOC do registro C100. O valor comparável ' +
+      'é o total do documento sem esses tributos (vNF), e não o total com eles (vNFTot).',
+    fonte: GUIA_PRATICO_322,
+  },
+  {
+    id: 'INTEGRACAO_RTC',
+    from: 2027,
+    to: null,
+    nome: 'Regra geral — tributos da reforma integram o total',
+    criterio:
+      'Como regra, CBS, IBS e Imposto Seletivo são considerados na escrituração do valor total do documento fiscal. ' +
+      'O valor comparável é o total com esses tributos (vNFTot), ou o total tradicional acrescido das parcelas ' +
+      'declaradas, quando o campo próprio não vier no documento.',
+    fonte: GUIA_PRATICO_322,
+  },
+];
+
+const REGIME_SEM_DEFINICAO: CompositionRegime = {
+  id: 'SEM_REGRA_DEFINIDA',
+  from: Number.NaN,
+  to: null,
+  nome: 'Exercício sem regra de composição declarada',
+  criterio:
+    'Nenhum regime de composição foi declarado para o exercício do documento nesta versão do sistema. A comparação ' +
+    'não é executada.',
+  fonte: 'Sem fonte normativa registrada para o exercício.',
+};
+
+export function regimeFor(exercicio: number | null): CompositionRegime {
+  if (exercicio === null) return REGIME_SEM_DEFINICAO;
+  return (
+    COMPOSITION_REGIMES.find(
+      (regime) => exercicio >= regime.from && (regime.to === null || exercicio <= regime.to),
+    ) ?? REGIME_SEM_DEFINICAO
+  );
+}
+
 export type CompositionStatus =
-  /** Documento anterior à transição: a composição não é questão. */
-  | 'ANTERIOR_A_TRANSICAO'
-  /** O XML declarou os grupos: o valor comparável pôde ser calculado. */
+  /** O valor comparável pôde ser formado segundo o regime do exercício. */
   | 'DETERMINADA'
-  /** Documento na transição sem os grupos no XML: composição desconhecida. */
-  | 'INDETERMINADA';
+  /**
+   * O regime é conhecido, mas o documento não traz o que ele exige. A regra
+   * reporta indício; não há composição a afirmar.
+   */
+  | 'INDETERMINADA'
+  /** Não há regime declarado para o exercício. A comparação não é executada. */
+  | 'SEM_REGRA';
 
 export interface ComparableTotal {
   readonly status: CompositionStatus;
-  /** Exercício usado na decisão; nulo quando nem o documento nem a auditoria o dizem. */
+  readonly regime: CompositionRegime;
   readonly exercicio: number | null;
+  /** `vNF` — total tradicional, sem IBS, CBS e IS. */
   readonly vNF: Cents;
+  /** `vNFTot` — total com IBS, CBS e IS, quando o documento o declara. */
+  readonly vNFTot: Cents | null;
   readonly ibs: Cents | null;
   readonly cbs: Cents | null;
   readonly is: Cents | null;
-  /** Soma das parcelas efetivamente deduzidas. */
-  readonly deducoes: Cents;
-  /** Total do documento líquido dos novos tributos declarados. */
+  /** Total das parcelas de reforma declaradas no documento. */
+  readonly tributosReforma: Cents;
+  /** Valor do XML comparável com o `VL_DOC`, segundo o regime. */
   readonly comparavel: Cents;
+  /** Campo ou expressão de onde o valor comparável saiu. */
+  readonly origemDoComparavel: string;
   /** Elementos lidos do XML, na forma `elemento=valor`. */
   readonly readFields: readonly string[];
-  /** Frase pronta para a evidência, dizendo qual composição foi usada. */
+  /** Frase pronta para a evidência. */
   readonly explicacao: string;
 }
 
@@ -79,115 +173,199 @@ function exercicioOf(invoice: Invoice, competencia: string | null): number | nul
 }
 
 /**
- * Valor do documento comparável com o `VL_DOC` escriturado.
+ * Valor do documento comparável com o `VL_DOC` escriturado, segundo o regime de
+ * composição do exercício.
  *
- * Nunca inventa parcela: só deduz o que o XML declarou, e diz quais elementos
- * leu para chegar ao número.
+ * Nunca inventa parcela: deduz ou acrescenta apenas o que o XML declara, e diz
+ * de qual campo o número saiu.
  */
 export function comparableTotal(invoice: Invoice, competencia: string | null): ComparableTotal {
   const exercicio = exercicioOf(invoice, competencia);
+  const regime = regimeFor(exercicio);
   const vNF = invoice.totals.total;
-
-  if (exercicio === null || exercicio < REFORM_TRANSITION_YEAR) {
-    return {
-      status: 'ANTERIOR_A_TRANSICAO',
-      exercicio,
-      vNF,
-      ibs: null,
-      cbs: null,
-      is: null,
-      deducoes: ZERO,
-      comparavel: vNF,
-      readFields: [],
-      explicacao:
-        exercicio === null
-          ? 'Exercício do documento não determinado; comparação feita sobre o valor total declarado.'
-          : `Documento do exercício ${exercicio}, anterior à transição: o valor total do documento é comparado ` +
-            'diretamente, sem ajuste de composição.',
-    };
-  }
-
   const reform = invoice.reformTaxes;
-  if (!reform) {
-    return {
-      status: 'INDETERMINADA',
-      exercicio,
-      vNF,
-      ibs: null,
-      cbs: null,
-      is: null,
-      deducoes: ZERO,
-      comparavel: vNF,
-      readFields: [],
-      explicacao:
-        `Documento do exercício ${exercicio}. O XML não declara IBS, CBS nem Imposto Seletivo, de modo que não é ` +
-        'possível determinar se o valor escriturado os inclui. A composição do total não foi apurada.',
-    };
-  }
 
-  const deducoes = addCents(reform.ibs ?? ZERO, reform.cbs ?? ZERO, reform.is ?? ZERO);
-  const declarados = [
-    ...(reform.ibs === null ? [] : [`IBS ${formatBRL(reform.ibs)}`]),
-    ...(reform.cbs === null ? [] : [`CBS ${formatBRL(reform.cbs)}`]),
-    ...(reform.is === null ? [] : [`IS ${formatBRL(reform.is)}`]),
-  ];
+  const vNFTot = reform?.totalWithReformTaxes ?? null;
+  const ibs = reform?.ibs ?? null;
+  const cbs = reform?.cbs ?? null;
+  const impostoSeletivo = reform?.is ?? null;
+  const tributosReforma = addCents(ibs ?? ZERO, cbs ?? ZERO, impostoSeletivo ?? ZERO);
+  const readFields = reform?.readFields ?? [];
 
-  return {
-    status: 'DETERMINADA',
+  const base = {
+    regime,
     exercicio,
     vNF,
-    ibs: reform.ibs,
-    cbs: reform.cbs,
-    is: reform.is,
-    deducoes,
-    comparavel: subCents(vNF, deducoes),
-    readFields: reform.readFields,
-    explicacao:
-      `Documento do exercício ${exercicio}. Valor comparável apurado a partir do total declarado no XML, ` +
-      `deduzidas as parcelas que o próprio XML informa: ${declarados.join(', ')}.`,
+    vNFTot,
+    ibs,
+    cbs,
+    is: impostoSeletivo,
+    tributosReforma,
+    readFields,
   };
+
+  switch (regime.id) {
+    case 'SEM_REFORMA':
+      return {
+        ...base,
+        status: 'DETERMINADA',
+        comparavel: vNF,
+        origemDoComparavel: 'total/ICMSTot/vNF',
+        explicacao:
+          `Exercício ${exercicio}: anterior à reforma. O valor total do documento é comparado diretamente com o ` +
+          'VL_DOC escriturado.',
+      };
+
+    case 'EXCLUSAO_2026': {
+      // O total tradicional já é o valor sem os novos tributos: é exatamente o
+      // que o Guia Prático determina para o VL_DOC deste exercício. `vNFTot`,
+      // quando existe, é deliberadamente descartado da comparação.
+      const comDeclaracao = reform !== null;
+      return {
+        ...base,
+        status: 'DETERMINADA',
+        comparavel: vNF,
+        origemDoComparavel: 'total/ICMSTot/vNF',
+        explicacao:
+          `Exercício ${exercicio}: CBS, IBS e Imposto Seletivo não integram o VL_DOC do registro C100. O valor ` +
+          'comparável é o total do documento sem esses tributos (vNF)' +
+          (comDeclaracao
+            ? vNFTot === null
+              ? ', e as parcelas de reforma declaradas no documento ficam fora da comparação.'
+              : `, e não o total com eles (vNFTot = ${formatBRL(vNFTot)}), que não é comparável com o VL_DOC ` +
+                'deste exercício.'
+            : '. O documento não declara parcelas de reforma.'),
+      };
+    }
+
+    case 'INTEGRACAO_RTC': {
+      if (vNFTot !== null) {
+        return {
+          ...base,
+          status: 'DETERMINADA',
+          comparavel: vNFTot,
+          origemDoComparavel: 'total/vNFTot',
+          explicacao:
+            `Exercício ${exercicio}: os tributos da reforma integram o valor total escriturado. O valor comparável ` +
+            'é o total declarado com IBS, CBS e IS (vNFTot).',
+        };
+      }
+
+      if (reform !== null) {
+        return {
+          ...base,
+          status: 'DETERMINADA',
+          comparavel: addCents(vNF, tributosReforma),
+          origemDoComparavel: 'total/ICMSTot/vNF + vIBS + vCBS + vIS',
+          explicacao:
+            `Exercício ${exercicio}: os tributos da reforma integram o valor total escriturado. O documento não ` +
+            'traz vNFTot, e o valor comparável foi formado somando ao total tradicional as parcelas declaradas.',
+        };
+      }
+
+      return {
+        ...base,
+        status: 'INDETERMINADA',
+        comparavel: vNF,
+        origemDoComparavel: 'total/ICMSTot/vNF',
+        explicacao:
+          `Exercício ${exercicio}: os tributos da reforma integram o valor total escriturado, mas o documento não ` +
+          'declara vNFTot nem as parcelas de IBS, CBS e IS. O valor comparável não pôde ser formado.',
+      };
+    }
+
+    default:
+      return {
+        ...base,
+        status: 'SEM_REGRA',
+        comparavel: vNF,
+        origemDoComparavel: 'total/ICMSTot/vNF',
+        explicacao:
+          exercicio === null
+            ? 'Exercício do documento não determinado: não há como escolher o regime de composição do valor total.'
+            : `Exercício ${exercicio}: nenhum regime de composição declarado nesta versão do sistema.`,
+      };
+  }
 }
 
-/** Linhas da composição, na ordem em que o auditor as confere. */
+export interface CompositionLine {
+  readonly label: string;
+  readonly value: string;
+  /** Campo do leiaute, quando a linha corresponde a um campo lido. */
+  readonly field: string | null;
+  /** Lado de onde a linha vem: o documento ou a escrituração. */
+  readonly side: 'XML' | 'EFD' | 'REGRA';
+}
+
+/**
+ * Linhas da composição, na ordem em que o auditor as confere.
+ *
+ * `vNFTot` aparece mesmo quando não entra na conta: em 2026, ver o campo
+ * presente e explicitamente fora da comparação é o que permite conferir que a
+ * regra do exercício foi aplicada — e não que o campo passou despercebido.
+ */
 export function compositionLines(
   composition: ComparableTotal,
   vlDoc: Cents,
-): readonly { readonly label: string; readonly value: string; readonly field: string | null }[] {
-  const lines: { label: string; value: string; field: string | null }[] = [
-    { label: 'vNF original', value: formatBRL(composition.vNF), field: 'total/ICMSTot/vNF' },
+  diferenca: Cents,
+): readonly CompositionLine[] {
+  const lines: CompositionLine[] = [
+    {
+      label: 'Exercício',
+      value: composition.exercicio === null ? 'não determinado' : String(composition.exercicio),
+      field: 'ide/dhEmi',
+      side: 'XML',
+    },
+    { label: 'vNF', value: formatBRL(composition.vNF), field: 'total/ICMSTot/vNF', side: 'XML' },
   ];
 
-  if (composition.status === 'DETERMINADA') {
-    lines.push({
-      label: '(-) IBS',
-      value: composition.ibs === null ? 'não declarado' : formatBRL(composition.ibs),
-      field: composition.ibs === null ? null : 'vIBS',
-    });
-    lines.push({
-      label: '(-) CBS',
-      value: composition.cbs === null ? 'não declarado' : formatBRL(composition.cbs),
-      field: composition.cbs === null ? null : 'vCBS',
-    });
-    lines.push({
-      label: '(-) IS',
-      value: composition.is === null ? 'não declarado' : formatBRL(composition.is),
-      field: composition.is === null ? null : 'vIS',
-    });
-  } else if (composition.status === 'INDETERMINADA') {
-    lines.push({ label: '(-) IBS', value: 'não declarado no XML', field: null });
-    lines.push({ label: '(-) CBS', value: 'não declarado no XML', field: null });
-    lines.push({ label: '(-) IS', value: 'não declarado no XML', field: null });
-  }
+  const usaTotalRtc = composition.origemDoComparavel === 'total/vNFTot';
+  lines.push({
+    label: 'vNFTot',
+    value:
+      composition.vNFTot === null
+        ? 'não declarado no XML'
+        : `${formatBRL(composition.vNFTot)}${usaTotalRtc ? '' : ' — fora da comparação neste exercício'}`,
+    field: composition.vNFTot === null ? null : 'total/vNFTot',
+    side: 'XML',
+  });
+
+  const parcela = (label: string, value: Cents | null, field: string): CompositionLine => ({
+    label,
+    value: value === null ? 'não declarado no XML' : formatBRL(value),
+    field: value === null ? null : field,
+    side: 'XML',
+  });
+
+  lines.push(parcela('IBS', composition.ibs, 'vIBS'));
+  lines.push(parcela('CBS', composition.cbs, 'vCBS'));
+  lines.push(parcela('IS', composition.is, 'vIS'));
 
   lines.push({
-    label: 'valor comparável',
-    value:
-      composition.status === 'INDETERMINADA'
-        ? `${formatBRL(composition.comparavel)} (composição não apurada)`
-        : formatBRL(composition.comparavel),
+    label: 'Regra de composição aplicada',
+    value: `${composition.regime.nome} — ${composition.regime.criterio}`,
     field: null,
+    side: 'REGRA',
   });
-  lines.push({ label: 'VL_DOC', value: formatBRL(vlDoc), field: 'VL_DOC' });
+
+  lines.push({
+    label: 'Valor comparável',
+    value:
+      composition.status === 'DETERMINADA'
+        ? `${formatBRL(composition.comparavel)} (de ${composition.origemDoComparavel})`
+        : `${formatBRL(composition.comparavel)} — composição não apurada`,
+    field: null,
+    side: 'REGRA',
+  });
+
+  lines.push({ label: 'C100.VL_DOC', value: formatBRL(vlDoc), field: 'VL_DOC', side: 'EFD' });
+  lines.push({ label: 'Diferença', value: formatBRL(diferenca), field: null, side: 'REGRA' });
+  lines.push({ label: 'Fonte normativa', value: composition.regime.fonte, field: null, side: 'REGRA' });
 
   return lines;
+}
+
+/** Diferença entre o valor comparável e o escriturado. */
+export function compositionDifference(composition: ComparableTotal, vlDoc: Cents): Cents {
+  return subCents(composition.comparavel, vlDoc);
 }

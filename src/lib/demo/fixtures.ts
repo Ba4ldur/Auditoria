@@ -64,8 +64,19 @@ export interface NfeSpec {
    * Tributos da reforma declarados no grupo de totais, em reais. Ausente
    * significa XML sem os grupos — que é como o sistema distingue "não declarado"
    * de "declarado zero".
+   *
+   * `vNFTot` é o total da NF-e COM esses tributos; quando omitido, é calculado
+   * como o total tradicional acrescido das parcelas declaradas, que é a relação
+   * esperada entre os dois campos. `semTotalRtc` suprime o campo, para o caso
+   * de documento que declara as parcelas mas não o total consolidado.
    */
-  readonly reforma?: { readonly ibs?: number; readonly cbs?: number; readonly is?: number };
+  readonly reforma?: {
+    readonly ibs?: number;
+    readonly cbs?: number;
+    readonly is?: number;
+    readonly vNFTot?: number;
+    readonly semTotalRtc?: boolean;
+  };
 }
 
 function money(value: number): string {
@@ -98,6 +109,13 @@ function reformaTotais(spec: NfeSpec): string {
     linhas.push(`          <vIS>${money(reforma.is)}</vIS>`);
     linhas.push('        </ISTot>');
   }
+
+  if (!reforma.semTotalRtc) {
+    const parcelas = (reforma.ibs ?? 0) + (reforma.cbs ?? 0) + (reforma.is ?? 0);
+    const total = reforma.vNFTot ?? round(computeNfeTotals(spec).total + parcelas);
+    linhas.push(`        <vNFTot>${money(total)}</vNFTot>`);
+  }
+
   return linhas.length === 0 ? '' : `${linhas.join('\n')}\n`;
 }
 

@@ -618,32 +618,35 @@ const ESCOPO_SAIDA: readonly FiscalScope[] = ['SAIDA_PROPRIA'];
 /**
  * ATT-FIS-003 — valor total do documento.
  *
- * A comparação deixa de ser trivial no período de transição da reforma
- * tributária: o total do XML e o `VL_DOC` escriturado podem computar IBS, CBS e
- * Imposto Seletivo de formas diferentes. A regra apura as duas leituras — o
- * total bruto e o total líquido dos novos tributos declarados — e só afirma
- * divergência quando **ambas** divergem. Quando a composição não pode ser
- * determinada, o resultado é indício, nunca divergência.
+ * A comparação segue o **regime de composição do exercício**, declarado em
+ * `reform-transition.ts` com a fonte normativa que o sustenta. Não há
+ * heurística: o sistema não tenta uma leitura e depois outra até alguma
+ * conciliar. Ele aplica a regra do exercício, mostra a composição usada e a
+ * fonte, e afirma a diferença quando ela existe.
+ *
+ * Quando o regime exige um campo que o documento não traz, ou quando não há
+ * regime declarado para o exercício, a regra reporta indício ou não verificado —
+ * nunca divergência.
  */
 export const attFis003: AuditRule = {
   id: 'att-fis-003',
   codigo: 'ATT-FIS-003',
-  versao: '3.0.0',
+  versao: '4.0.0',
   nome: 'Valor total do documento divergente entre XML e EFD',
   descricao:
-    'Compara o valor total do documento no XML com o campo VL_DOC do registro C100, verificando a composição do ' +
-    'total quando o documento é do período de transição da reforma tributária.',
+    'Compara o valor total do documento no XML com o campo VL_DOC do registro C100, aplicando a regra de composição ' +
+    'do exercício do documento.',
   modulo: 'FISCAL',
   gravidade: 'ALTA',
   documentosNecessarios: [...REQUIRED],
   toleranciaPadrao: DEFAULT_TOLERANCE,
   limitacoes:
-    'A diferença é um fato aritmético. A partir do exercício de ' +
-    `${REFORM_TRANSITION_YEAR}, o total do documento e o valor escriturado podem computar IBS, CBS e Imposto ` +
-    'Seletivo de formas diferentes; a regra calcula o valor comparável a partir do que o XML declara e NÃO afirma ' +
-    'qual composição é a correta — isso é matéria do Guia Prático da EFD ICMS/IPI em vigor e exige conferência por ' +
-    'profissional habilitado. Sem os grupos de IBS/CBS/IS no XML, a composição não é apurada e a diferença sai como ' +
-    'indício. Documentos complementares, de ajuste e de devolução também são rebaixados a indício.',
+    'A diferença é um fato aritmético. A composição do valor comparável segue o regime do exercício: no exercício de ' +
+    `${REFORM_TRANSITION_YEAR}, CBS, IBS e Imposto Seletivo não integram o VL_DOC do C100, e o campo vNFTot do ` +
+    'leiaute RTC — que é o total COM esses tributos — fica deliberadamente fora da comparação. A regra aplica o ' +
+    'critério do Guia Prático vigente e o declara na evidência; a conclusão sobre o tratamento tributário da operação ' +
+    'continua dependendo de profissional habilitado. Exercício sem regime declarado, ou documento sem os campos que o ' +
+    'regime exige, não produz divergência. Documentos complementares, de ajuste e de devolução são rebaixados a indício.',
   executar(context) {
     const blocked = notVerified(context, 'ATT-FIS-003');
     if (blocked) return blocked;
@@ -653,18 +656,22 @@ export const attFis003: AuditRule = {
     const competencia = context.dataset.competencia ?? null;
 
     const findings: RuleFinding[] = [];
+    const semRegra: DocumentPair[] = [];
     let correct = 0;
 
     for (const pair of recon.pairs) {
       const composition = comparableTotal(pair.xml, competencia);
       const vlDoc = pair.efd.totals.total;
 
-      const bruto = compareValues(composition.vNF, vlDoc, context.config.tolerancia);
-      const liquido = compareValues(composition.comparavel, vlDoc, context.config.tolerancia);
+      // Exercício sem regime declarado: não há critério a aplicar, e inventar
+      // um seria pior do que não conferir.
+      if (composition.status === 'SEM_REGRA') {
+        semRegra.push(pair);
+        continue;
+      }
 
-      // Qualquer das duas leituras conciliando encerra a conferência: o valor
-      // escriturado corresponde ao documento sob alguma composição declarada.
-      if (bruto.withinTolerance || liquido.withinTolerance) {
+      const comparison = compareValues(composition.comparavel, vlDoc, context.config.tolerancia);
+      if (comparison.withinTolerance) {
         correct += 1;
         continue;
       }
@@ -675,7 +682,7 @@ export const attFis003: AuditRule = {
 
       const motivos = [
         ...(composicaoIndeterminada
-          ? ['a composição do total não pôde ser determinada a partir do XML']
+          ? ['o documento não traz os campos que o regime do exercício exige para formar o valor comparável']
           : []),
         ...ressalvas.map((item) => item.titulo.toLowerCase()),
       ];
@@ -685,31 +692,22 @@ export const attFis003: AuditRule = {
         natureza: indicio ? 'INDICIO' : 'FATO',
         titulo: `Valor total do documento divergente entre XML e EFD — ${describeInvoice(pair.xml)}`,
         descricao:
-          `Valor comparável do XML: ${formatBRL(composition.comparavel)}. Valor escriturado (VL_DOC): ` +
-          `${formatBRL(vlDoc)}. Diferença de ${formatBRL(liquido.difference)}. ${liquido.toleranceLabel}` +
-          (composition.status === 'DETERMINADA'
-            ? ` Comparação também conferida sobre o total bruto (${formatBRL(composition.vNF)}), que igualmente ` +
-              'não concilia.'
-            : '') +
+          `Valor comparável (${composition.origemDoComparavel}): ${formatBRL(composition.comparavel)}. ` +
+          `Valor escriturado (VL_DOC): ${formatBRL(vlDoc)}. Diferença de ${formatBRL(comparison.difference)}. ` +
+          `${comparison.toleranceLabel} Regra aplicada: ${composition.regime.nome}.` +
           (motivos.length > 0 ? ` Apresentado como indício: ${motivos.join('; ')}.` : ''),
         documento: invoiceReference(pair.xml),
         rotuloOrigem: 'Valor comparável do XML',
         valorOrigem: composition.comparavel,
         rotuloDestino: 'Valor escriturado (VL_DOC)',
         valorDestino: vlDoc,
-        diferenca: liquido.difference,
+        diferenca: comparison.difference,
         analiseHumana: [
+          `Composição aplicada: ${composition.explicacao}`,
           ...(composicaoIndeterminada
             ? [
-                'O documento é do período de transição da reforma tributária e o XML não declara IBS, CBS nem ' +
-                  'Imposto Seletivo. Confirme a composição do valor escriturado contra o Guia Prático em vigor ' +
+                'Confirme, no arquivo original, se os campos exigidos pelo regime do exercício estão presentes ' +
                   'antes de tratar a diferença como erro.',
-              ]
-            : []),
-          ...(composition.status === 'DETERMINADA'
-            ? [
-                'A composição usada está detalhada nas evidências. Confirme, contra o Guia Prático em vigor, se os ' +
-                  'novos tributos devem ou não integrar o VL_DOC no exercício do documento.',
               ]
             : []),
           ...ressalvas.map((item) => item.explicacao),
@@ -718,11 +716,41 @@ export const attFis003: AuditRule = {
         evidencias: [
           keyEvidence(trace, pair.xml, pair.key),
           scopeEvidence(trace, pair.scope),
-          ...compositionEvidences(trace, pair, composition, vlDoc),
-          trace.evidence('Tolerância aplicada', 'Configuração da regra nesta organização', liquido.toleranceLabel),
+          ...compositionEvidences(trace, pair, composition, vlDoc, comparison.difference),
+          trace.evidence('Tolerância aplicada', 'Configuração da regra nesta organização', comparison.toleranceLabel),
           ...caveatEvidences(trace, pair.ressalvas),
         ],
       });
+    }
+
+    if (semRegra.length > 0) {
+      const exercicios = [
+        ...new Set(semRegra.map((pair) => comparableTotal(pair.xml, competencia).exercicio ?? 'indeterminado')),
+      ];
+      findings.push(
+        aggregate({
+          resultado: 'NAO_VERIFICADO',
+          natureza: 'FATO',
+          titulo: 'ATT-FIS-003: exercício sem regra de composição declarada',
+          descricao:
+            `${semRegra.length} documento(s) não foram comparados porque esta versão do sistema não declara regime ` +
+            `de composição do valor total para o(s) exercício(s) ${exercicios.join(', ')}. A composição do VL_DOC ` +
+            'mudou com a reforma tributária e depende do Guia Prático de cada exercício.',
+          analiseHumana:
+            'Atualize a tabela de regimes de composição com a regra do exercício, ou confira estes documentos ' +
+            'manualmente. Não comparar não significa conformidade.',
+          documentos: semRegra.map((pair) => pair.xml),
+          evidencias: [
+            trace.evidence(
+              'Exercícios sem regime declarado',
+              'Exercício apurado a partir da data de emissão dos documentos',
+              exercicios.join(', '),
+              { field: 'ide/dhEmi' },
+            ),
+          ],
+          trace,
+        }),
+      );
     }
 
     return { cruzamentosCorretos: correct, findings: truncate(findings, 'ATT-FIS-003', trace) };
@@ -730,31 +758,32 @@ export const attFis003: AuditRule = {
 };
 
 /**
- * Evidências da composição do total, na ordem em que o auditor as confere:
- * `vNF original`, as deduções declaradas, o `valor comparável` e o `VL_DOC`.
+ * Evidências da composição, na ordem em que o auditor as confere: exercício,
+ * `vNF`, `vNFTot`, as parcelas da reforma, a regra aplicada, o valor comparável
+ * resultante, o `VL_DOC`, a diferença e a fonte normativa.
  */
 function compositionEvidences(
   trace: Tracer,
   pair: DocumentPair,
   composition: ComparableTotal,
   vlDoc: Cents,
+  diferenca: Cents,
 ): EvidenceDraft[] {
-  const linhas = compositionLines(composition, vlDoc).map((linha) =>
-    trace.evidence(linha.label, 'Composição do valor total do documento', linha.value, {
-      source: linha.field === 'VL_DOC' ? 'EFD_ICMS_IPI' : pair.xml.source,
-      from: linha.field === 'VL_DOC' ? pair.efd.origin : pair.xml.origin,
+  const linhas = compositionLines(composition, vlDoc, diferenca).map((linha) =>
+    trace.evidence(linha.label, originOf(linha.side), linha.value, {
+      source: linha.side === 'EFD' ? 'EFD_ICMS_IPI' : linha.side === 'XML' ? pair.xml.source : null,
+      from: linha.side === 'EFD' ? pair.efd.origin : linha.side === 'XML' ? pair.xml.origin : null,
       field: linha.field,
     }),
   );
 
   return [
-    trace.evidence('Composição utilizada', composition.explicacao, COMPOSITION_LABELS[composition.status]),
     ...linhas,
     ...(composition.readFields.length > 0
       ? [
           trace.evidence(
             'Elementos lidos do XML',
-            'Elementos de IBS, CBS e Imposto Seletivo efetivamente encontrados no documento',
+            'Elementos de IBS, CBS, Imposto Seletivo e total RTC efetivamente encontrados no documento',
             composition.readFields.join(' · '),
             { source: pair.xml.source, from: pair.xml.origin },
           ),
@@ -763,11 +792,11 @@ function compositionEvidences(
   ];
 }
 
-const COMPOSITION_LABELS: Readonly<Record<ComparableTotal['status'], string>> = {
-  ANTERIOR_A_TRANSICAO: 'Comparação direta (documento anterior à transição)',
-  DETERMINADA: 'Total líquido de IBS, CBS e IS declarados no XML',
-  INDETERMINADA: 'Composição não apurada — o XML não declara IBS, CBS nem IS',
-};
+function originOf(side: 'XML' | 'EFD' | 'REGRA'): string {
+  if (side === 'XML') return 'Campo do documento eletrônico';
+  if (side === 'EFD') return 'Campo do registro C100 da escrituração';
+  return 'Regra de composição aplicada pelo motor de auditoria';
+}
 
 export const attFis004 = valueComparisonRule({
   id: 'att-fis-004',

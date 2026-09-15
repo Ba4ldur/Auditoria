@@ -315,8 +315,14 @@ function readReformTaxes(totalNode: XmlNode | null, infNFe: XmlNode | null): Ref
   const cbs = read('vCBS');
   const imposotSeletivo = read('vIS');
 
-  if (ibs === null && cbs === null && imposotSeletivo === null) return null;
-  return { ibs, cbs, is: imposotSeletivo, readFields };
+  // `vNFTot` é o total da NF-e COM os novos tributos. Lido em separado e nunca
+  // confundido com `vNF`: são dois totais distintos do mesmo documento.
+  const totalWithReformTaxes = read('vNFTot');
+
+  if (ibs === null && cbs === null && imposotSeletivo === null && totalWithReformTaxes === null) {
+    return null;
+  }
+  return { ibs, cbs, is: imposotSeletivo, totalWithReformTaxes, readFields };
 }
 
 function readTotals(icmsTot: XmlNode | null, items: readonly InvoiceItem[]): InvoiceTotals {

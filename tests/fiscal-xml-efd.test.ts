@@ -150,12 +150,12 @@ describe('escopo do cruzamento: entrada de terceiro', () => {
       efdFile([{ spec, override: { valorDocumento: totals.total - 100 } }]),
     ]);
 
-    // O documento é de 2026 e o XML não declara IBS/CBS/IS: a diferença é
-    // apurada e exibida, mas não conclui — ver os cenários de composição.
+    // O regime de 2026 é determinado: o VL_DOC não inclui os tributos da
+    // reforma, e o comparável é o total tradicional. A diferença é fato.
     const fis003 = byRule(runAudit(dados, ORG).findings, 'ATT-FIS-003');
     expect(fis003).toHaveLength(1);
     expect(fis003[0]?.difference).toBe(10000);
-    expect(fis003[0]?.nature).toBe('INDICIO');
+    expect(fis003[0]?.nature).toBe('FATO');
   });
 });
 
@@ -183,7 +183,7 @@ describe('ressalvas: documento complementar', () => {
     expect(ressalvas.find((item) => item.fieldName === 'COD_SIT')?.lineNumber).toBeGreaterThan(0);
   });
 
-  it('sem ressalva e antes da transição, a mesma diferença é divergência e fato', async () => {
+  it('sem ressalva, a mesma diferença é divergência e fato', async () => {
     const spec = saida(302, { emissao: '2025-08-14' });
     const totals = computeNfeTotals(spec);
     const dados = await datasetFrom([
@@ -317,18 +317,18 @@ describe('rastreabilidade da ocorrência', () => {
     const finding = byRule(runAudit(dados, ORG).findings, 'ATT-FIS-003')[0];
     expect(finding).toBeDefined();
     expect(finding?.ruleCode).toBe('ATT-FIS-003');
-    expect(finding?.ruleVersion).toBe('3.0.0');
+    expect(finding?.ruleVersion).toBe('4.0.0');
 
     const chave = finding?.evidence.find((item) => item.label === 'Chave de acesso');
     expect(chave?.value).toBe(nfeAccessKey(spec));
 
-    const origem = finding?.evidence.find((item) => item.label === 'vNF original');
+    const origem = finding?.evidence.find((item) => item.label === 'vNF');
     expect(origem?.fieldName).toBe('total/ICMSTot/vNF');
     expect(origem?.fileName).toBe('nfe-0.xml');
     expect(origem?.recordCode).toBe('infNFe');
     expect(origem?.parserVersion).toBeTruthy();
 
-    const destino = finding?.evidence.find((item) => item.label === 'VL_DOC');
+    const destino = finding?.evidence.find((item) => item.label === 'C100.VL_DOC');
     expect(destino?.fieldName).toBe('VL_DOC');
     expect(destino?.fileName).toBe('efd-icms.txt');
     expect(destino?.recordCode).toBe('C100');

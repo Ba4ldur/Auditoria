@@ -94,6 +94,10 @@ describe('pipeline completo XML × EFD ICMS/IPI', () => {
     const icmsDivergente = venda(7003, 3000);
     const duplicado = venda(7004, 1500);
     const entrada = compra(7005);
+    // Documento de 2026 com os tributos da reforma: vNF 2.000,00 e
+    // vNFTot 2.015,00. O VL_DOC escriturado é o vNF, como o Guia Prático
+    // determina para o exercício.
+    const comReforma: NfeSpec = { ...venda(7006, 2000), reforma: { ibs: 1, cbs: 9, is: 5 } };
 
     const store = getStore();
     const company = await store.createCompany({
@@ -109,7 +113,7 @@ describe('pipeline completo XML × EFD ICMS/IPI', () => {
     const audit = await store.createAudit({ companyId: company.id, competencia: '2026-08' });
 
     // ---------------------------------------------------------------- upload
-    const documentos = [correto, naoEscriturado, icmsDivergente, duplicado, entrada];
+    const documentos = [correto, naoEscriturado, icmsDivergente, duplicado, entrada, comReforma];
     for (const spec of documentos) {
       const upload = await ingestUpload({
         auditId: audit.id,
@@ -131,6 +135,7 @@ describe('pipeline completo XML × EFD ICMS/IPI', () => {
         { spec: icmsDivergente, override: { icms: computeNfeTotals(icmsDivergente).icms - 90 } },
         { spec: duplicado, override: { duplicado: true } },
         { spec: entrada, override: { cfop: '2102', baseIcms: 0, icms: 0 } },
+        { spec: comReforma, override: { valorDocumento: computeNfeTotals(comReforma).total } },
       ] as never,
       icmsARecolher: 66000,
     });
@@ -148,14 +153,14 @@ describe('pipeline completo XML × EFD ICMS/IPI', () => {
     // ------------------------------------------------------------ processamento
     const outcome = await processAudit(audit.id);
     expect(outcome.failedFiles).toBe(0);
-    expect(outcome.processedFiles).toBe(6);
+    expect(outcome.processedFiles).toBe(7);
 
     const files = await store.listFiles(audit.id);
-    expect(files).toHaveLength(6);
+    expect(files).toHaveLength(7);
     expect(files.every((file) => file.status === 'PROCESSADO')).toBe(true);
     const xmlFilesGravados = files.filter((file) => file.detectedSource === 'XML_NFE');
     const efdFileGravado = files.find((file) => file.detectedSource === 'EFD_ICMS_IPI');
-    expect(xmlFilesGravados).toHaveLength(5);
+    expect(xmlFilesGravados).toHaveLength(6);
     expect(xmlFilesGravados.every((file) => file.parserVersion === XML_PARSER_VERSION)).toBe(true);
     expect(efdFileGravado?.parserVersion).toBe(EFD_ICMS_IPI_PARSER_VERSION);
 
@@ -164,9 +169,9 @@ describe('pipeline completo XML × EFD ICMS/IPI', () => {
     expect(dataset).not.toBeNull();
     if (!dataset) return;
 
-    expect(dataset.invoices.filter((invoice) => invoice.source === 'XML_NFE')).toHaveLength(5);
+    expect(dataset.invoices.filter((invoice) => invoice.source === 'XML_NFE')).toHaveLength(6);
     // O duplicado é colapsado: quatro chaves distintas do lado da escrituração.
-    expect(dataset.invoices.filter((invoice) => invoice.source === 'EFD_ICMS_IPI')).toHaveLength(4);
+    expect(dataset.invoices.filter((invoice) => invoice.source === 'EFD_ICMS_IPI')).toHaveLength(5);
 
     // ------------------------------------------------------------ reconciliação
     // Remonta o dataset completo pelo caminho da aplicação, com a versão de
@@ -175,10 +180,10 @@ describe('pipeline completo XML × EFD ICMS/IPI', () => {
     const completo = await loadAuditDataset(audit.id);
     expect(completo).not.toBeNull();
     if (!completo) return;
-    expect(completo.parserVersions.size).toBe(6);
+    expect(completo.parserVersions.size).toBe(7);
 
     const recon = reconcile(outcome.dataset);
-    expect(recon.pairs).toHaveLength(4);
+    expect(recon.pairs).toHaveLength(5);
     expect(recon.xmlOnly.map((invoice) => invoice.number)).toEqual(['7002']);
     expect(recon.efdDuplicates).toHaveLength(1);
     expect(recon.efdDuplicates[0]?.key).toBe(nfeAccessKey(duplicado));
@@ -204,10 +209,31 @@ describe('pipeline completo XML × EFD ICMS/IPI', () => {
     expect(byRule('ATT-FIS-005').some((finding) => finding.status === 'NAO_APLICAVEL')).toBe(true);
     expect(byRule('ATT-FIS-006').filter((finding) => finding.status === 'DIVERGENCIA')).toHaveLength(0);
 
+    // A composição de 2026 não gera ocorrência para o documento conciliado.
+    const fis003 = byRule('ATT-FIS-003').filter((finding) => finding.status === 'DIVERGENCIA');
+
     // Duplicidade.
     const fis008 = byRule('ATT-FIS-008');
     expect(fis008).toHaveLength(1);
     expect(fis008[0]?.documentRef).toBe(nfeAccessKey(duplicado));
+
+    // ------------------------------------------------- composição do exercício
+    // O documento com IBS/CBS/IS concilia: em 2026 o VL_DOC não os inclui, e o
+    // comparável é o vNF. Se o motor usasse o vNFTot, haveria divergência de
+    // R$ 15,00 — o falso positivo que a regra de vigência existe para impedir.
+    expect(
+      fis003.filter((finding) => finding.documentRef === nfeAccessKey(comReforma)),
+    ).toHaveLength(0);
+
+    // O total RTC sobrevive à gravação e à releitura: `reform_taxes` é jsonb, e
+    // uma coluna que grava mas não devolve só aparece em teste de integração.
+    const persistido = dataset.invoices.find(
+      (invoice) => invoice.source === 'XML_NFE' && invoice.accessKey === nfeAccessKey(comReforma),
+    );
+    expect(persistido?.totals.total).toBe(200000);
+    expect(persistido?.reformTaxes?.totalWithReformTaxes).toBe(201500);
+    expect(persistido?.reformTaxes?.ibs).toBe(100);
+    expect(persistido?.reformTaxes?.readFields).toContain('vNFTot=2015.00');
 
     // ---------------------------------------------------------- rastreabilidade
     // Toda evidência precisa poder ser reconduzida ao arquivo que a produziu.

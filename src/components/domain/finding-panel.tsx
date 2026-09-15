@@ -74,6 +74,16 @@ export function FindingPanel({
 
         <p className="mt-4 text-sm leading-relaxed text-ink">{finding.description}</p>
 
+        {finding.status === 'NAO_VERIFICADO' || finding.status === 'NAO_APLICAVEL' ? (
+          <p className="mt-3 rounded-md border border-line bg-navy-50/60 px-3 py-2 text-xs leading-relaxed text-ink-muted">
+            {finding.status === 'NAO_VERIFICADO'
+              ? 'Esta conferência não pôde ser executada. Não é divergência e não afeta o score — mas também não é ' +
+                'prova de conformidade: o ponto permanece em aberto.'
+              : 'A regra não se aplica a estes documentos. Não é divergência e não afeta o score. Se a conferência ' +
+                'for necessária, ela precisa ser feita à luz do tratamento tributário de cada operação.'}
+          </p>
+        ) : null}
+
         {finding.originValue !== null || finding.targetValue !== null ? (
           <dl className="mt-5 grid grid-cols-3 gap-px overflow-hidden rounded-md border border-line bg-line">
             <ValueCell label={finding.originLabel ?? 'Origem'} value={finding.originValue} />

@@ -32,6 +32,8 @@ export interface EngineOptions {
   readonly rules?: readonly AuditRule[];
   readonly settings?: ReadonlyMap<string, RuleSetting>;
   readonly scoreWeights?: ScoreWeights;
+  /** Fator de penalidade das ocorrências de natureza INDICIO (padrão 0,5). */
+  readonly indicioFactor?: number;
   readonly revenuePolicy?: RevenuePolicy;
   readonly now?: () => string;
 }
@@ -117,8 +119,13 @@ export function runAudit(dataset: AuditDataset, options: EngineOptions): EngineR
   }
 
   const score = computeScore(
-    findings.map((finding) => ({ status: finding.status, severity: finding.severity })),
+    findings.map((finding) => ({
+      status: finding.status,
+      severity: finding.severity,
+      nature: finding.nature,
+    })),
     weights,
+    options.indicioFactor,
   );
 
   return {

@@ -6,12 +6,12 @@ import { getStore } from '@/lib/data';
 import { formatCnpj } from '@/lib/core/cnpj';
 import { formatCompetencia } from '@/lib/core/competencia';
 import { formatIsoDateTime } from '@/lib/core/dates';
-import { AUDIT_STATUS_LABELS } from '@/lib/domain/entities';
+import { AUDIT_STATUS_LABELS, FINDING_STATUS_LABELS } from '@/lib/domain/entities';
 import { TAX_REGIME_LABELS } from '@/lib/domain/model';
 import { BAND_LABELS } from '@/lib/audit-engine';
 import { LinkButton } from '@/components/ui/button';
 import { Card, CardBody, CardHeader } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { Badge, FINDING_STATUS_TONES } from '@/components/ui/badge';
 import { ScoreGauge, StatCard } from '@/components/ui/stat';
 import { EmptyState, Notice, PageHeader } from '@/components/ui/page';
 import { UploadDropzone } from '@/components/domain/upload-dropzone';
@@ -273,14 +273,17 @@ export default async function AuditPage({
             <Card className="mt-4">
               <CardHeader
                 title={`Regras não verificadas ou não aplicáveis (${notVerified.length})`}
-                description="Um cruzamento que não pode ser executado não e evidência de conformidade nem de erro, e por isso não afeta o score."
+                description="Um cruzamento que não pôde ser executado, ou que não se aplica aos documentos, não é evidência de conformidade nem de erro: não conta como divergência e não afeta o score. Fica listado aqui porque continua em aberto."
               />
               <CardBody>
                 <ul className="flex flex-col gap-2">
                   {notVerified.map((finding) => (
                     <li key={finding.id} className="rounded-md border border-line px-3 py-2">
-                      <div className="flex flex-wrap items-baseline gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="font-mono text-xs text-navy-700">{finding.ruleCode}</span>
+                        <Badge tone={FINDING_STATUS_TONES[finding.status]}>
+                          {FINDING_STATUS_LABELS[finding.status]}
+                        </Badge>
                         <span className="text-xs font-medium text-ink">{finding.title}</span>
                       </div>
                       <p className="mt-1 text-xs text-ink-muted">{finding.description}</p>

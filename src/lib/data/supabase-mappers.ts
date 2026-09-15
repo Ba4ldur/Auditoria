@@ -9,6 +9,7 @@
 
 import { cents, type Cents } from '@/lib/core/money';
 import {
+  DEFAULT_INDICIO_FACTOR,
   DEFAULT_SCORE_WEIGHTS,
   type Audit,
   type AuditComment,
@@ -78,6 +79,7 @@ export function toSettings(row: Row): OrganizationSettings {
   return {
     organizationId: str(row, 'organization_id'),
     scoreWeights: (row.score_weights as OrganizationSettings['scoreWeights']) ?? DEFAULT_SCORE_WEIGHTS,
+    indicioFactor: nullableNum(row, 'indicio_factor') ?? DEFAULT_INDICIO_FACTOR,
     maxUploadBytes: num(row, 'max_upload_bytes') || MAX_UPLOAD_BYTES,
     updatedAt: str(row, 'updated_at'),
   };
@@ -194,6 +196,7 @@ export function toInvoice(row: Row): Invoice {
     cfopPrincipal: nullableStr(row, 'cfop_principal'),
     cfops: (row.cfops as string[]) ?? [],
     totals: row.totals as Invoice['totals'],
+    reformTaxes: (row.reform_taxes as Invoice['reformTaxes']) ?? null,
     items: items as Invoice['items'],
     origin: toOrigin(row),
   };

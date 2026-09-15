@@ -75,6 +75,7 @@ export async function identifyFile(
     identity: {
       ...EMPTY_IDENTITY,
       taxId: invoice.emitterTaxId,
+      relatedTaxIds: invoice.recipientTaxId ? [invoice.recipientTaxId] : [],
       legalName: invoice.emitterName,
       competencia: competenciaFromDate(invoice.issueDate),
       startDate: invoice.issueDate,
@@ -136,6 +137,7 @@ function identifyZip(bytes: Uint8Array): FileIdentity {
     return {
       ...EMPTY_IDENTITY,
       taxId: invoice.emitterTaxId,
+      relatedTaxIds: invoice.recipientTaxId ? [invoice.recipientTaxId] : [],
       legalName: invoice.emitterName,
       competencia: competenciaFromDate(invoice.issueDate),
       startDate: invoice.issueDate,

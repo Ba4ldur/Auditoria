@@ -43,7 +43,7 @@ export default async function SettingsPage() {
             description="O score parte de 100 e desconta o peso de cada ocorrência que exige ação, conforme a gravidade. Nunca fica abaixo de zero."
           />
           <CardBody>
-            <ScoreWeightsForm weights={settings.scoreWeights} />
+            <ScoreWeightsForm weights={settings.scoreWeights} indicioFactor={settings.indicioFactor} />
           </CardBody>
         </Card>
 

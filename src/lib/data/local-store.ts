@@ -16,6 +16,7 @@ import { newId } from '@/lib/core/hash';
 import { onlyDigits } from '@/lib/core/cnpj';
 import type { Competencia } from '@/lib/core/competencia';
 import {
+  DEFAULT_INDICIO_FACTOR,
   DEFAULT_SCORE_WEIGHTS,
   type Audit,
   type AuditComment,
@@ -81,6 +82,7 @@ function emptyDatabase(): Database {
     settings: {
       organizationId: DEFAULT_ORGANIZATION_ID,
       scoreWeights: DEFAULT_SCORE_WEIGHTS,
+      indicioFactor: DEFAULT_INDICIO_FACTOR,
       maxUploadBytes: MAX_UPLOAD_BYTES,
       updatedAt: timestamp,
     },

@@ -88,6 +88,7 @@ export async function processAudit(auditId: string): Promise<ProcessOutcome> {
     auditId,
     settings: ruleSettings,
     scoreWeights: settings.scoreWeights,
+    indicioFactor: settings.indicioFactor,
     revenuePolicy: policyFromRules(await store.listCfopRules()),
   });
 
@@ -301,7 +302,7 @@ export async function loadAuditDataset(auditId: string): Promise<AuditDataset | 
     // O dataset reconstruído a partir do banco não passa pela deduplicação: os
     // documentos gravados já são o resultado dela. Reprocessar o arquivo é o
     // caminho para reavaliar duplicidade.
-    duplicateOrigins: new Map(),
+    duplicates: new Map(),
   };
 }
 

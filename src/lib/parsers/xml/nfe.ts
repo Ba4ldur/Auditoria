@@ -26,6 +26,7 @@ import {
   type InvoiceItem,
   type InvoiceTotals,
   type OperationDirection,
+  type ReformTaxTotals,
 } from '@/lib/domain/model';
 import type { FileMessage } from '@/lib/domain/entities';
 import type { DataSourceKind } from '@/lib/domain/sources';
@@ -82,6 +83,7 @@ export function parseNfeXml(
   const emit = node(infNFe, 'emit');
   const dest = node(infNFe, 'dest');
   const icmsTot = node(infNFe, 'total', 'ICMSTot');
+  const totalNode = node(infNFe, 'total');
 
   const rawKey = attr(infNFe, 'Id') ?? findText(root, 'chNFe', 4);
   const accessKey = normalizeNfeKey(rawKey?.replace(/^NFe/i, '') ?? null);
@@ -150,6 +152,7 @@ export function parseNfeXml(
     cfopPrincipal: cfops.principal,
     cfops: cfops.all,
     totals,
+    reformTaxes: readReformTaxes(totalNode, infNFe),
     items,
     origin: recordOrigin({
       fileId: context.fileId,
@@ -269,6 +272,53 @@ function parseRate(raw: string | null): number | null {
  * Reads the `ICMSTot` block. When a total is absent the item sum is used as a
  * fallback, and that fact stays visible through the item-level data.
  */
+/**
+ * Tributos da reforma (EC 132/2023) declarados no XML: IBS, CBS e Imposto
+ * Seletivo.
+ *
+ * A leitura é por **nome de elemento**, procurado dentro do grupo de totais e,
+ * na falta dele, em todo o corpo do documento. Isso é deliberado: as posições
+ * exatas dos grupos variam entre as notas técnicas da NF-e, e amarrar o parser a
+ * um caminho fixo faria a leitura falhar em silêncio a cada revisão do leiaute.
+ * Procurar pelo nome do elemento e **registrar exatamente qual elemento foi
+ * encontrado** é verificável; presumir um caminho não é.
+ *
+ * Quando nenhum dos elementos existe, o retorno é `null` — o documento não
+ * declarou os tributos. Zero e ausência são coisas diferentes e o motor de
+ * regras depende dessa distinção para não concluir sobre o que não leu.
+ */
+function readReformTaxes(totalNode: XmlNode | null, infNFe: XmlNode | null): ReformTaxTotals | null {
+  const readFields: string[] = [];
+
+  const readIn = (scope: XmlNode | null, tag: string): Cents | null => {
+    if (!scope) return null;
+    const raw = findText(scope, tag, 6);
+    if (raw === null) return null;
+    const parsed = parseDecimalToCents(raw);
+    if (parsed === null) return null;
+    readFields.push(`${tag}=${raw}`);
+    return parsed;
+  };
+
+  /** Procura primeiro no grupo de totais; só então no documento inteiro. */
+  const read = (tag: string): Cents | null => readIn(totalNode, tag) ?? readIn(infNFe, tag);
+
+  // O IBS pode vir consolidado em `vIBS` ou separado nas parcelas estadual e
+  // municipal; nesse caso as duas somam e as duas ficam na evidência.
+  let ibs = read('vIBS');
+  if (ibs === null) {
+    const uf = read('vIBSUF');
+    const mun = read('vIBSMun');
+    ibs = uf === null && mun === null ? null : addCents(uf ?? (0 as Cents), mun ?? (0 as Cents));
+  }
+
+  const cbs = read('vCBS');
+  const imposotSeletivo = read('vIS');
+
+  if (ibs === null && cbs === null && imposotSeletivo === null) return null;
+  return { ibs, cbs, is: imposotSeletivo, readFields };
+}
+
 function readTotals(icmsTot: XmlNode | null, items: readonly InvoiceItem[]): InvoiceTotals {
   const fromItems = (pick: (item: InvoiceItem) => Cents): Cents => sumCents(items.map(pick));
 

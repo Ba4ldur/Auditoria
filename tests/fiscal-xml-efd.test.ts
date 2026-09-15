@@ -22,6 +22,7 @@ import {
   nfeAccessKey,
   type NfeSpec,
 } from '@/lib/demo/fixtures';
+import { NFCE_CONSOLIDATION_NOTICE } from '@/lib/parsers/sped/efd-icms-ipi/coverage';
 import { datasetFrom, textFile, type FixtureFile } from './helpers/dataset';
 
 const ORG = { organizationId: 'org-1', auditId: 'audit-1' };
@@ -149,9 +150,12 @@ describe('escopo do cruzamento: entrada de terceiro', () => {
       efdFile([{ spec, override: { valorDocumento: totals.total - 100 } }]),
     ]);
 
+    // O documento é de 2026 e o XML não declara IBS/CBS/IS: a diferença é
+    // apurada e exibida, mas não conclui — ver os cenários de composição.
     const fis003 = byRule(runAudit(dados, ORG).findings, 'ATT-FIS-003');
-    expect(fis003.filter((finding) => finding.status === 'DIVERGENCIA')).toHaveLength(1);
+    expect(fis003).toHaveLength(1);
     expect(fis003[0]?.difference).toBe(10000);
+    expect(fis003[0]?.nature).toBe('INDICIO');
   });
 });
 
@@ -179,8 +183,8 @@ describe('ressalvas: documento complementar', () => {
     expect(ressalvas.find((item) => item.fieldName === 'COD_SIT')?.lineNumber).toBeGreaterThan(0);
   });
 
-  it('sem ressalva, a mesma diferença é divergência e fato', async () => {
-    const spec = saida(302);
+  it('sem ressalva e antes da transição, a mesma diferença é divergência e fato', async () => {
+    const spec = saida(302, { emissao: '2025-08-14' });
     const totals = computeNfeTotals(spec);
     const dados = await datasetFrom([
       ...xmlFiles([spec]),
@@ -195,25 +199,35 @@ describe('ressalvas: documento complementar', () => {
 });
 
 describe('integridade da escrituração', () => {
-  it('ATT-FIS-002 acusa a mesma chave escriturada duas vezes, com as duas linhas', async () => {
+  it('ATT-FIS-008 acusa a mesma chave escriturada duas vezes, com as duas linhas', async () => {
     const spec = saida(401);
     const dados = await datasetFrom([
       ...xmlFiles([spec]),
       efdFile([{ spec, override: { duplicado: true } }]),
     ]);
 
-    const duplicidade = byRule(runAudit(dados, ORG).findings, 'ATT-FIS-002').find((finding) =>
-      finding.title.includes('mais de uma vez'),
-    );
+    const findings = runAudit(dados, ORG).findings;
+    const duplicidade = byRule(findings, 'ATT-FIS-008')[0];
 
     expect(duplicidade).toBeDefined();
     expect(duplicidade?.status).toBe('DIVERGENCIA');
+    expect(duplicidade?.nature).toBe('FATO');
     expect(duplicidade?.documentRef).toBe(nfeAccessKey(spec));
+    expect(duplicidade?.humanReviewNote).toBeTruthy();
 
-    const ocorrencias = duplicidade?.evidence.filter((item) => item.label.startsWith('Ocorrência')) ?? [];
-    expect(ocorrencias).toHaveLength(2);
-    expect(ocorrencias[0]?.lineNumber).not.toBe(ocorrencias[1]?.lineNumber);
-    expect(ocorrencias.every((item) => item.recordCode === 'C100')).toBe(true);
+    // ATT-FIS-002 deixa de acusar duplicidade: a responsabilidade é da 008.
+    expect(byRule(findings, 'ATT-FIS-002').filter((f) => f.title.includes('mais de uma vez'))).toHaveLength(0);
+
+    const linhas = duplicidade?.evidence.filter((item) => item.label.includes('linha e arquivo')) ?? [];
+    expect(linhas).toHaveLength(2);
+    expect(linhas[0]?.lineNumber).not.toBe(linhas[1]?.lineNumber);
+    expect(linhas.every((item) => item.recordCode === 'C100')).toBe(true);
+
+    const rotulos = duplicidade?.evidence.map((item) => item.label) ?? [];
+    expect(rotulos).toContain('Quantidade de ocorrências');
+    expect(rotulos).toContain('Ocorrência 1: valor');
+    expect(rotulos).toContain('Ocorrência 1: situação');
+    expect(rotulos).toContain('Ocorrência 1: sentido');
   });
 
   it('ATT-FIS-002 agrupa entradas sem XML em vez de acusar uma divergência por documento', async () => {
@@ -244,8 +258,16 @@ describe('NFC-e sem escrituração documento a documento', () => {
 
     expect(fis001.filter((finding) => finding.status === 'DIVERGENCIA')).toHaveLength(0);
     const naoVerificado = fis001.find((finding) => finding.status === 'NAO_VERIFICADO');
-    expect(naoVerificado?.title).toContain('modelo 65');
+    expect(naoVerificado?.title).toContain(NFCE_CONSOLIDATION_NOTICE);
+    expect(naoVerificado?.description).toContain('modelo 65');
+    expect(naoVerificado?.description).toContain('não afetam o score');
     expect(naoVerificado?.humanReviewNote).toBeTruthy();
+    // O auditor precisa saber exatamente o que falta ler para fechar o ponto.
+    const registros = naoVerificado?.evidence.find(
+      (item) => item.label === 'Registros ainda não interpretados',
+    );
+    expect(registros?.value).toContain('C300');
+    expect(registros?.value).toContain('C490');
   });
 
   it('havendo modelo 65 na EFD, a NFC-e ausente volta a ser divergência', async () => {
@@ -295,18 +317,18 @@ describe('rastreabilidade da ocorrência', () => {
     const finding = byRule(runAudit(dados, ORG).findings, 'ATT-FIS-003')[0];
     expect(finding).toBeDefined();
     expect(finding?.ruleCode).toBe('ATT-FIS-003');
-    expect(finding?.ruleVersion).toBe('2.0.0');
+    expect(finding?.ruleVersion).toBe('3.0.0');
 
     const chave = finding?.evidence.find((item) => item.label === 'Chave de acesso');
     expect(chave?.value).toBe(nfeAccessKey(spec));
 
-    const origem = finding?.evidence.find((item) => item.label === 'Valor total no XML');
+    const origem = finding?.evidence.find((item) => item.label === 'vNF original');
     expect(origem?.fieldName).toBe('total/ICMSTot/vNF');
     expect(origem?.fileName).toBe('nfe-0.xml');
     expect(origem?.recordCode).toBe('infNFe');
     expect(origem?.parserVersion).toBeTruthy();
 
-    const destino = finding?.evidence.find((item) => item.label === 'Valor escriturado (VL_DOC)');
+    const destino = finding?.evidence.find((item) => item.label === 'VL_DOC');
     expect(destino?.fieldName).toBe('VL_DOC');
     expect(destino?.fileName).toBe('efd-icms.txt');
     expect(destino?.recordCode).toBe('C100');

@@ -51,7 +51,7 @@ export interface AuditDataset {
    */
   readonly parserVersions: ReadonlyMap<string, string>;
   /**
-   * Origens colapsadas pela deduplicação, por `source|chave`, incluindo a
+   * Ocorrências colapsadas pela deduplicação, por `source|chave`, incluindo a
    * ocorrência preservada.
    *
    * A deduplicação existe porque o mesmo XML costuma chegar duas vezes (solto e
@@ -59,8 +59,12 @@ export interface AuditDataset {
    * porém, a mesma chave em dois registros C100 é uma duplicidade real, que
    * altera a apuração do período. Colapsar sem registrar faria o sistema apagar
    * exatamente o fato que precisa acusar.
+   *
+   * Guarda o documento inteiro, e não apenas a origem, porque a regra que
+   * reporta a duplicidade precisa exibir o valor, o COD_SIT e o sentido de cada
+   * ocorrência — dados que só existem no documento.
    */
-  readonly duplicateOrigins: ReadonlyMap<string, readonly RecordOrigin[]>;
+  readonly duplicates: ReadonlyMap<string, readonly Invoice[]>;
 }
 
 /**
@@ -93,7 +97,7 @@ export function buildDataset(input: DatasetInput): AuditDataset {
   const files: AuditFileSummary[] = [];
   const availableSources = new Set<DataSourceKind>();
   const parserVersions = new Map<string, string>();
-  const duplicateOrigins = new Map<string, RecordOrigin[]>();
+  const duplicates = new Map<string, Invoice[]>();
 
   for (const { payload, fileId, fileName } of input.payloads) {
     files.push({ fileId, fileName, source: payload.source, parserVersion: payload.parserVersion ?? null });
@@ -108,19 +112,21 @@ export function buildDataset(input: DatasetInput): AuditDataset {
         fileName: invoice.origin.fileName ?? fileName,
       };
 
-      const kept = invoicesBySourceKey.get(dedupeKey);
-      if (kept) {
-        const origins = duplicateOrigins.get(dedupeKey) ?? [kept.origin];
-        origins.push(origin);
-        duplicateOrigins.set(dedupeKey, origins);
-        continue;
-      }
-
-      invoicesBySourceKey.set(dedupeKey, {
+      const normalized: Invoice = {
         ...invoice,
         direction: resolveDirection(invoice, input.company.cnpj),
         origin,
-      });
+      };
+
+      const kept = invoicesBySourceKey.get(dedupeKey);
+      if (kept) {
+        const occurrences = duplicates.get(dedupeKey) ?? [kept];
+        occurrences.push(normalized);
+        duplicates.set(dedupeKey, occurrences);
+        continue;
+      }
+
+      invoicesBySourceKey.set(dedupeKey, normalized);
     }
 
     for (const revenue of payload.revenues) {
@@ -149,17 +155,17 @@ export function buildDataset(input: DatasetInput): AuditDataset {
     files,
     availableSources,
     parserVersions,
-    duplicateOrigins,
+    duplicates,
   };
 }
 
 /** Ocorrências colapsadas de um documento, ou lista vazia se não houve. */
-export function duplicateOriginsOf(
+export function duplicatesOf(
   dataset: AuditDataset,
   source: DataSourceKind,
   accessKey: string,
-): readonly RecordOrigin[] {
-  return dataset.duplicateOrigins.get(`${source}|${accessKey}`) ?? [];
+): readonly Invoice[] {
+  return dataset.duplicates.get(`${source}|${accessKey}`) ?? [];
 }
 
 /** Versão do parser que leu o arquivo de onde o registro veio, se conhecida. */

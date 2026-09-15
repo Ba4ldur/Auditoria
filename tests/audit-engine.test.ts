@@ -134,6 +134,33 @@ describe('score de conformidade', () => {
       { status: 'NAO_APLICAVEL', severity: 'CRITICA' },
     ]);
     expect(result.score).toBe(100);
+    expect(result.penalty).toBe(0);
+  });
+
+  it('indício pesa menos que divergência confirmada, pelo fator configurado', () => {
+    const confirmada = computeScore([{ status: 'DIVERGENCIA', severity: 'ALTA', nature: 'FATO' }]);
+    const indicio = computeScore([{ status: 'ALERTA', severity: 'ALTA', nature: 'INDICIO' }]);
+
+    // Peso ALTA = 7; o padrão de 0,5 arredonda 3,5 para 4.
+    expect(confirmada.penalty).toBe(7);
+    expect(indicio.penalty).toBe(4);
+    expect(indicio.indicios).toBe(1);
+    expect(confirmada.indicios).toBe(0);
+  });
+
+  it('o fator de indício é configurável e limitado ao intervalo [0, 1]', () => {
+    const entrada = [{ status: 'DIVERGENCIA' as const, severity: 'ALTA' as const, nature: 'INDICIO' as const }];
+
+    expect(computeScore(entrada, DEFAULT_SCORE_WEIGHTS, 0).penalty).toBe(0);
+    expect(computeScore(entrada, DEFAULT_SCORE_WEIGHTS, 1).penalty).toBe(7);
+    // Valores fora do intervalo são aparados, não propagados para o score.
+    expect(computeScore(entrada, DEFAULT_SCORE_WEIGHTS, 5).penalty).toBe(7);
+    expect(computeScore(entrada, DEFAULT_SCORE_WEIGHTS, -3).penalty).toBe(0);
+    expect(computeScore(entrada, DEFAULT_SCORE_WEIGHTS, Number.NaN).penalty).toBe(4);
+  });
+
+  it('ocorrência sem natureza declarada é tratada como fato, não como indício', () => {
+    expect(computeScore([{ status: 'DIVERGENCIA', severity: 'ALTA' }]).penalty).toBe(7);
   });
 
   it('classifica as faixas', () => {

@@ -11,9 +11,12 @@
  * tipo ou a lista de layouts verificados.
  */
 
-export const XML_PARSER_VERSION = '1.0.0';
-export const ZIP_PARSER_VERSION = '1.0.0';
-export const EFD_ICMS_IPI_PARSER_VERSION = '1.0.0';
+// 1.1.0: leitura de ide/finNFe, dos grupos de IBS/CBS/IS e do destinatário na identidade.
+export const XML_PARSER_VERSION = '1.1.0';
+// 1.1.0: identidade do arquivo passa a incluir todas as partes das operações.
+export const ZIP_PARSER_VERSION = '1.1.0';
+// 1.1.0: COD_SIT passa a alimentar finalidade e escrituração extemporânea.
+export const EFD_ICMS_IPI_PARSER_VERSION = '1.1.0';
 export const EFD_CONTRIB_PARSER_VERSION = '1.0.0';
 export const PGDAS_PARSER_VERSION = '1.0.0';
 

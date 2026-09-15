@@ -196,6 +196,7 @@ function toInvoice(
       baseCofins,
       cofins,
     },
+    reformTaxes: null,
     items,
     origin: recordOrigin({
       fileId: context.fileId,

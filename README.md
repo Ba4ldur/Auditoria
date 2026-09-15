@@ -594,11 +594,13 @@ Regras da casa:
 | --- | --- | --- | --- |
 | `ATT-FIS-001` | Fiscal | XML de NF-e sem escrituração na EFD ICMS/IPI (pela chave) | Saída, entrada, indefinido |
 | `ATT-FIS-002` | Fiscal | Registro C100 sem XML correspondente; chave escriturada em duplicidade | Saída, entrada, indefinido |
-| `ATT-FIS-003` | Fiscal | Valor total do documento: XML × `VL_DOC` | Saída, entrada, indefinido |
+| `ATT-FIS-003` | Fiscal | Valor total do documento: XML × `VL_DOC`, com verificação de composição | Saída, entrada, indefinido |
 | `ATT-FIS-004` | Fiscal | Base de ICMS: XML × `VL_BC_ICMS` | Somente saída própria |
 | `ATT-FIS-005` | Fiscal | ICMS: XML × `VL_ICMS` | Somente saída própria |
 | `ATT-FIS-006` | Fiscal | CFOP predominante: XML × C170/C190 | Somente saída própria |
 | `ATT-FIS-007` | Fiscal | Quantidade de documentos: XML × EFD | Saída, entrada, indefinido |
+| `ATT-FIS-008` | Fiscal | Mesma chave escriturada em mais de um C100 | Só EFD |
+| `ATT-FIS-009` | Fiscal | Situação do documento: XML × `COD_SIT` | Saída, entrada, indefinido |
 | `ATT-FAT-001` | Faturamento | Documentos fiscais × receita bruta do PGDAS-D | — |
 | `ATT-FAT-002` | Faturamento | EFD ICMS/IPI × PGDAS-D | — |
 | `ATT-FAT-003` | Faturamento | EFD-Contribuições × PGDAS-D | — |
@@ -643,6 +645,52 @@ O que fica de fora nunca fica em silêncio: cada conjunto excluído vira uma
 ocorrência agregada com a contagem, uma amostra de chaves e a razão da exclusão.
 Não verificar não é conformidade.
 
+### Composição do total no período de transição (ATT-FIS-003)
+
+Até 2025, comparar `vNF` do XML com `VL_DOC` do C100 é comparar duas expressões
+do mesmo número. Com IBS, CBS e Imposto Seletivo em vigor, deixa de ser: se um
+lado computa os novos tributos no total e o outro não, a diferença aritmética é
+diferença de composição, não erro de escrituração.
+
+A regra passa a apurar **duas leituras** e só conclui quando as duas divergem:
+
+| Situação do documento | O que a regra faz | Resultado quando há diferença |
+| --- | --- | --- |
+| Exercício anterior a `REFORM_TRANSITION_YEAR` | Compara `vNF` com `VL_DOC` | `DIVERGENCIA` / `FATO` |
+| Exercício de transição, XML declara IBS/CBS/IS | Calcula `vNF − IBS − CBS − IS` e compara as duas leituras | `DIVERGENCIA` / `FATO` **somente se ambas divergirem** |
+| Exercício de transição, XML não declara os grupos | Compara pelo total bruto | `ALERTA` / `INDICIO`, nunca divergência |
+
+A evidência mostra a conta inteira, na ordem em que se confere:
+
+```
+vNF original        R$ 1.000,00     total/ICMSTot/vNF
+(-) IBS             R$     1,00     vIBS
+(-) CBS             R$     9,00     vCBS
+(-) IS              R$     5,00     vIS
+valor comparável    R$   985,00
+VL_DOC              R$   600,00     VL_DOC
+```
+
+Quatro decisões de projeto sustentam isso:
+
+- **Nada é inventado.** O parser procura os elementos `vIBS`, `vCBS` e `vIS`
+  pelo nome, dentro do grupo de totais, e registra em `Elementos lidos do XML`
+  exatamente o que encontrou. Elemento ausente é `null`, não zero.
+- **Ausência não é zero.** `reformTaxes: null` significa "a fonte não declarou".
+  É essa distinção que sustenta a recusa em concluir.
+- **O ano é parâmetro, não regra embutida.** `REFORM_TRANSITION_YEAR`, em
+  `src/lib/audit-engine/reform-transition.ts`.
+- **O sistema não decide o tratamento.** Qual composição a legislação exige para
+  o `VL_DOC` é matéria do Guia Prático da EFD ICMS/IPI em vigor, e a regra
+  declara isso nas suas `limitacoes`. Ela apresenta as duas leituras e a conta;
+  a conclusão é de profissional habilitado.
+
+> **A confirmar antes da validação em produção.** O tratamento de IBS, CBS e IS
+> no `VL_DOC` do C100 e os nomes exatos dos elementos no leiaute da NF-e em vigor
+> precisam ser conferidos contra o Guia Prático e a Nota Técnica aplicáveis. A
+> implementação é conservadora por construção — na dúvida, não conclui — mas a
+> conferência normativa não foi feita e não é suprida por ela.
+
 ### Ressalvas
 
 Documento complementar, de ajuste, de devolução ou emitido sob regime especial
@@ -658,9 +706,28 @@ documento.
 
 Se o XML traz NFC-e (modelo 65) e o arquivo da EFD não escritura **nenhum**
 documento de modelo 65, `ATT-FIS-001` reporta `NAO_VERIFICADO` para esse
-subconjunto em vez de acusar cada NFC-e como não escriturada. O parser lê a
-escrituração documento a documento (C100) e não os registros de consolidação do
-bloco C; afirmar a ausência seria afirmar um fato que o arquivo não sustenta.
+subconjunto, com o motivo:
+
+> NFC-e escriturada por registros consolidados ainda não suportados.
+
+Essas NFC-e **não contam como divergência e não afetam o score**, e aparecem na
+tela da auditoria em *Regras não verificadas ou não aplicáveis*. Não verificar
+também não é conformidade: o ponto continua listado e em aberto.
+
+**Registros lidos e não lidos** estão catalogados em
+`src/lib/parsers/sped/efd-icms-ipi/coverage.ts`, com o que cada um alimenta ou
+destravaria. Resumo:
+
+| Bloco | Lidos hoje | Ainda não lidos |
+| --- | --- | --- |
+| 0 | `0000`, `0005`, `0100`, `0150`, `0190`, `0200` | demais registros de tabela |
+| C | `C100`, `C170`, `C190`, `C195`, `C197` | `C300`, `C310`, `C320`, `C321`, `C350`, `C370`, `C390`, `C400`, `C405`, `C410`, `C420`, `C425`, `C460`, `C465`, `C470`, `C490`, `C495` |
+| E | `E100`, `E110`, `E111` | demais registros de apuração |
+
+Qual registro de consolidação se aplica depende da legislação da unidade
+federada e do equipamento emissor. **O sistema não determina qual é o exigido em
+cada caso** — declara apenas que nenhum deles é lido hoje. Implementá-los é uma
+etapa própria, fora do escopo desta.
 
 ### Tolerância
 
@@ -694,8 +761,28 @@ ocorrência arquivada.
 
 ### Score
 
-Parte de 100 e desconta o peso da gravidade de cada ocorrência que exige ação
-(`DIVERGENCIA` ou `ALERTA`). Pesos padrão, configuráveis em *Configurações*:
+```
+penalidade  =  Σ  peso[gravidade] × fator(natureza)
+              ocorrências que exigem ação
+
+fator(FATO)    = 1
+fator(INDICIO) = indicioFactor      (padrão 0,5; configurável por organização)
+
+score = máx(0, 100 − arredonda(penalidade))
+```
+
+Entram na soma apenas as ocorrências com resultado `DIVERGENCIA` ou `ALERTA`.
+Por construção, portanto:
+
+| Resultado | Penaliza? | Por quê |
+| --- | --- | --- |
+| `DIVERGENCIA` | Sim | Exige ação do auditor |
+| `ALERTA` | Sim | Exige ação do auditor |
+| `NAO_APLICAVEL` | **Não** | A regra não se aplica àqueles documentos — é o caso das exclusões por escopo (ICMS e CFOP de entradas). Não há o que corrigir |
+| `NAO_VERIFICADO` | **Não** | A conferência não pôde ser feita — arquivo ausente, registro não suportado. Não é prova de não conformidade, e também não é prova de conformidade |
+| `OK` | Não | Por definição |
+
+Pesos padrão por gravidade, configuráveis em *Configurações*:
 
 | Gravidade | Peso |
 | --- | --- |
@@ -705,7 +792,13 @@ Parte de 100 e desconta o peso da gravidade de cada ocorrência que exige ação
 | ALTA | 7 |
 | CRÍTICA | 15 |
 
-Nunca fica abaixo de zero. Faixas: **Excelente** (≥ 90), **Bom** (≥ 75),
+O **fator de indício** existe porque um indício é uma diferença cuja leitura
+fiscal depende de análise humana: há causa legítima conhecida que pode explicá-la.
+Pesá-lo como divergência confirmada tornaria o score pessimista a ponto de deixar
+de informar; ignorá-lo o tornaria cego. O fator é limitado a [0, 1] e ajustável
+em *Configurações → Pesos do score*.
+
+O score nunca fica abaixo de zero. Faixas: **Excelente** (≥ 90), **Bom** (≥ 75),
 **Atenção** (≥ 50), **Crítico** (< 50).
 
 ---
@@ -742,11 +835,18 @@ variáveis de ambiente do provedor.
 
 - [ ] Aplicar `0001_schema.sql`, `0002_rls.sql`, `0003_seed_organization.sql`,
       `0004_fase2_validacao.sql` e `0005_fase3_xml_efd.sql`, nessa ordem
-      (`supabase db push`). A migração `0005` é obrigatória: além das colunas da
-      fase 3, ela cria `record_code` e `line_number` em
+      (`supabase db push`). A migração `0005` é **obrigatória**: além das colunas
+      da fase 3, ela cria `record_code` e `line_number` em
       `audit_finding_evidence`, que a aplicação gravava desde a fase 2 sem que
       nenhuma migração as tivesse criado — sem ela, a gravação das evidências
       falha em modo `supabase`.
+- [ ] Conferir no log de inicialização que não aparece
+      `Banco de dados requer migração`. O servidor sobe de qualquer modo — banco
+      desatualizado é problema de implantação, não de segurança —, mas a
+      auditoria calcula o resultado e falha ao gravar as evidências.
+- [ ] `npm run db:check` contra um banco descartável, se houver PostgreSQL
+      disponível: aplica a sequência, reaplica a última migração, confere as
+      colunas exigidas e testa a reversão (`0005_fase3_xml_efd.down.sql`).
 - [ ] Conferir que **todas** as tabelas de dados têm RLS habilitado e política
       comparando `organization_id` com `public.current_organization_id()`.
 - [ ] Conferir as chaves únicas: `audit_files (audit_id, sha256)`,
@@ -824,15 +924,21 @@ variáveis de ambiente do provedor.
   documento a documento (C100/C170/C190/C197). Operações escrituradas por
   consolidação ficam fora dos cruzamentos por chave, e é por isso que NFC-e sem
   modelo 65 na EFD sai como `NAO_VERIFICADO`, não como divergência.
-- **Divergência de situação entre XML e EFD ainda não é regra.** Um documento
-  cancelado no XML e escriturado como regular no C100 é excluído dos dois lados
-  do cruzamento (nenhum documento sem efeito fiscal participa) e hoje não gera
-  ocorrência própria. A reconciliação já separa esses documentos
-  (`xmlIneffective`, `efdIneffective`); falta a regra que os confronta.
-- **Duplicidade só é apurada no processamento.** A reconciliação acusa a mesma
+- **Duplicidade só é apurada no processamento.** `ATT-FIS-008` acusa a mesma
   chave escriturada em mais de um C100 a partir do que a normalização colapsou.
   Um dataset remontado do banco já contém o resultado da deduplicação, de modo
   que a reavaliação de duplicidade exige reprocessar o arquivo.
+- **Situação comparável apenas entre autorizada e cancelada.** `ATT-FIS-009`
+  confronta as duas fontes, mas só há correspondência inequívoca nesses dois
+  estados. Denegação, inutilização e situação não declarada saem como indício, e
+  a regra não determina qual das fontes está correta.
+- **Composição do `VL_DOC` na transição não está confirmada em fonte oficial.**
+  Ver a advertência em *Composição do total no período de transição*. A regra é
+  conservadora — na dúvida não conclui —, mas a conferência normativa contra o
+  Guia Prático e a Nota Técnica em vigor continua pendente.
+- **IBS, CBS e IS não são lidos da EFD.** O leiaute do C100 mapeado por este
+  parser não possui campos para eles, e `reformTaxes` do lado da escrituração é
+  sempre nulo. A verificação de composição usa apenas o que o XML declara.
 - **Confirmação manual restrita ao PGDAS-D.** Os campos confirmáveis são
   competência, receita bruta do período, RBT12 e total devido. XML e SPED não
   têm correção manual: são arquivos estruturados cuja divergência de leitura

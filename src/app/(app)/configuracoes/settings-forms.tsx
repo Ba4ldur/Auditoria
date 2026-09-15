@@ -18,7 +18,13 @@ function SubmitButton({ label }: { label: string }) {
   );
 }
 
-export function ScoreWeightsForm({ weights }: { weights: ScoreWeights }) {
+export function ScoreWeightsForm({
+  weights,
+  indicioFactor,
+}: {
+  weights: ScoreWeights;
+  indicioFactor: number;
+}) {
   const [state, formAction] = useActionState(saveScoreWeightsAction, EMPTY_FORM_STATE);
   const submitted = state.values ?? {};
 
@@ -39,6 +45,19 @@ export function ScoreWeightsForm({ weights }: { weights: ScoreWeights }) {
           </Field>
         ))}
       </div>
+
+      <Field
+        label="Fator de indício"
+        htmlFor="indicio_factor"
+        hint="Multiplica o peso da gravidade nas ocorrências de natureza indício, cuja leitura fiscal depende de análise humana. 0 ignora indícios; 1 os pesa como divergência confirmada."
+      >
+        <Input
+          id="indicio_factor"
+          name="indicio_factor"
+          defaultValue={submitted.indicio_factor ?? String(indicioFactor)}
+          inputMode="decimal"
+        />
+      </Field>
 
       <div className="flex justify-end">
         <SubmitButton label="Salvar pesos" />

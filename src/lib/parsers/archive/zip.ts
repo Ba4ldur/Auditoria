@@ -221,8 +221,19 @@ function buildIdentity(invoices: readonly Invoice[]): FileIdentity {
   const endDate = dates[dates.length - 1] ?? null;
   const name = invoices.find((i) => i.emitterTaxId === dominant)?.emitterName ?? null;
 
+  // Um ZIP de XML costuma misturar saídas e entradas; todos os CNPJ que
+  // aparecem como emitente ou destinatário identificam o arquivo.
+  const related = [
+    ...new Set(
+      invoices
+        .flatMap((invoice) => [invoice.emitterTaxId, invoice.recipientTaxId])
+        .filter((taxId): taxId is string => Boolean(taxId) && taxId !== dominant),
+    ),
+  ];
+
   return {
     taxId: dominant,
+    relatedTaxIds: related,
     legalName: name,
     competencia: competenciaFromDate(startDate),
     startDate,

@@ -30,8 +30,17 @@ export async function saveScoreWeightsAction(
     weights[severity] = value;
   }
 
+  const rawFactor = String(formData.get('indicio_factor') ?? '');
+  const indicioFactor = Number(rawFactor.replace(',', '.'));
+  if (!Number.isFinite(indicioFactor) || indicioFactor < 0 || indicioFactor > 1) {
+    return {
+      error: 'Fator de indício inválido. Use um número entre 0 e 1 (0,5 = metade do peso da gravidade).',
+      values,
+    };
+  }
+
   try {
-    await getStore().saveSettings({ scoreWeights: weights as ScoreWeights });
+    await getStore().saveSettings({ scoreWeights: weights as ScoreWeights, indicioFactor });
   } catch (error) {
     return { error: describeError(error), values };
   }

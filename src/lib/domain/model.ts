@@ -174,6 +174,26 @@ export const EMPTY_TOTALS: InvoiceTotals = Object.freeze({
   cofins: 0 as Cents,
 });
 
+/**
+ * Tributos criados pela Emenda Constitucional 132/2023 (IBS, CBS e Imposto
+ * Seletivo), quando o leiaute do documento os declara.
+ *
+ * O tipo é deliberadamente nulo-por-omissão: `null` significa que o XML não
+ * trouxe o grupo, e não que o tributo seja zero. A diferença decide se uma
+ * comparação de valor total pode ou não ser concluída no período de transição —
+ * presumir zero transformaria ausência de informação em fato.
+ */
+export interface ReformTaxTotals {
+  readonly ibs: Cents | null;
+  readonly cbs: Cents | null;
+  readonly is: Cents | null;
+  /**
+   * Elementos efetivamente encontrados no arquivo, na forma `elemento=valor`.
+   * Vai para a evidência: o sistema afirma o que leu, não o que esperava ler.
+   */
+  readonly readFields: readonly string[];
+}
+
 export interface InvoiceItem {
   readonly numero: string;
   readonly codigo: string | null;
@@ -220,6 +240,8 @@ export interface Invoice extends FiscalDocument {
   readonly cfopPrincipal: string | null;
   readonly cfops: readonly string[];
   readonly totals: InvoiceTotals;
+  /** Tributos da reforma declarados pela fonte; `null` quando não declarados. */
+  readonly reformTaxes: ReformTaxTotals | null;
   readonly items: readonly InvoiceItem[];
   /** Arquivo, registro e linha de onde o documento foi lido. */
   readonly origin: RecordOrigin;
@@ -378,6 +400,16 @@ export interface ParticipantRecord {
 /** Registration data declared by the audited company inside a file. */
 export interface FileIdentity {
   readonly taxId: string | null;
+  /**
+   * Outros CNPJ/CPF declarados no arquivo que também vinculam o documento a um
+   * contribuinte — no XML de NF-e, o destinatário.
+   *
+   * Existe por um motivo prático: um documento de entrada é emitido por
+   * terceiro, e identificar o arquivo apenas pelo emitente faria toda nota de
+   * compra ser recusada como "de outra empresa". A empresa auditada é parte da
+   * operação dos dois lados; a identificação precisa olhar os dois.
+   */
+  readonly relatedTaxIds: readonly string[];
   readonly legalName: string | null;
   readonly competencia: Competencia | null;
   readonly startDate: string | null;
@@ -388,6 +420,7 @@ export interface FileIdentity {
 
 export const EMPTY_IDENTITY: FileIdentity = Object.freeze({
   taxId: null,
+  relatedTaxIds: [],
   legalName: null,
   competencia: null,
   startDate: null,

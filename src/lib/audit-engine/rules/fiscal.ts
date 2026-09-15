@@ -1,5 +1,5 @@
 /**
- * Regras ATT-FIS-001 a ATT-FIS-007 — XML de NF-e/NFC-e × EFD ICMS/IPI.
+ * Regras ATT-FIS-001 a ATT-FIS-009 — XML de NF-e/NFC-e × EFD ICMS/IPI.
  *
  * Todas afirmam fatos aritméticos sobre os arquivos apresentados. Se um fato é
  * ou não um erro depende da natureza da operação e cabe ao auditor: cada
@@ -25,6 +25,12 @@ import { formatIsoDate } from '@/lib/core/dates';
 import type { Invoice } from '@/lib/domain/model';
 import { compareValues } from '../tolerance';
 import {
+  REFORM_TRANSITION_YEAR,
+  comparableTotal,
+  compositionLines,
+  type ComparableTotal,
+} from '../reform-transition';
+import {
   FISCAL_SCOPE_LABELS,
   blockingCaveats,
   reconcile,
@@ -35,6 +41,10 @@ import {
   type Reconciliation,
 } from '../reconciliation';
 import { DEFAULT_TOLERANCE, type AuditRule, type RuleContext, type RuleFinding, type RuleResult } from '../types';
+import {
+  NFCE_CONSOLIDATION_NOTICE,
+  UNSUPPORTED_REGISTERS,
+} from '@/lib/parsers/sped/efd-icms-ipi/coverage';
 import {
   MAX_INDIVIDUAL_FINDINGS,
   describeInvoice,
@@ -206,7 +216,7 @@ export const attFis001: AuditRule = {
     const ausentes = recon.xmlOnly.filter((invoice) => !consolidacao.has(invoice.id));
 
     const findings: RuleFinding[] = ausentes.map((invoice) => {
-      const scope = scopeOf(invoice, null);
+      const scope = scopeOf(context.dataset.company.cnpj, invoice, null);
       const entrada = scope === 'ENTRADA_TERCEIRO';
       return {
         resultado: scope === 'INDEFINIDO' ? 'ALERTA' : 'DIVERGENCIA',
@@ -262,11 +272,12 @@ export const attFis001: AuditRule = {
         aggregate({
           resultado: 'NAO_VERIFICADO',
           natureza: 'FATO',
-          titulo: 'NFC-e não conferidas: a EFD não escritura documentos de modelo 65',
+          titulo: `NFC-e não conferidas — ${NFCE_CONSOLIDATION_NOTICE}`,
           descricao:
             `${recon.nfceSemModelo65NaEfd.length} NFC-e do XML não têm registro C100 correspondente, e o arquivo da ` +
-            'EFD não escritura nenhum documento de modelo 65. Este parser lê a escrituração documento a documento ' +
-            '(C100) e não os registros de consolidação do bloco C, de modo que a ausência não pode ser afirmada.',
+            `EFD não escritura nenhum documento de modelo 65. ${NFCE_CONSOLIDATION_NOTICE} Este parser lê a ` +
+            'escrituração documento a documento (C100) e não os registros de consolidação do bloco C, de modo que a ' +
+            'ausência não pode ser afirmada. Estas NFC-e não contam como divergência e não afetam o score.',
           analiseHumana:
             'Verifique no arquivo da EFD se as operações com consumidor final estão escrituradas por registros de ' +
             'consolidação. Enquanto isso não for confirmado, estas NFC-e não são apuradas como não escrituradas.',
@@ -277,6 +288,13 @@ export const attFis001: AuditRule = {
               'Contagem de registros C100 com COD_MOD igual a 65',
               '0',
               { source: 'EFD_ICMS_IPI', field: 'COD_MOD' },
+            ),
+            trace.evidence(
+              'Registros ainda não interpretados',
+              'Registros de consolidação do bloco C que este parser não lê; enquanto isso, a conferência de NFC-e ' +
+                'escriturada por consolidação não pode ser executada',
+              UNSUPPORTED_REGISTERS.map((item) => item.code).join(', '),
+              { source: 'EFD_ICMS_IPI' },
             ),
           ],
           trace,
@@ -320,8 +338,7 @@ export const attFis002: AuditRule = {
   versao: '2.0.0',
   nome: 'Documento escriturado na EFD ICMS/IPI sem XML correspondente',
   descricao:
-    'Localiza registros C100 com chave de acesso que não possuem XML correspondente entre os arquivos importados, e ' +
-    'chaves escrituradas mais de uma vez no mesmo arquivo.',
+    'Localiza registros C100 com chave de acesso que não possuem XML correspondente entre os arquivos importados.',
   modulo: 'FISCAL',
   gravidade: 'MEDIA',
   documentosNecessarios: [...REQUIRED],
@@ -336,10 +353,11 @@ export const attFis002: AuditRule = {
 
     const trace = tracer(context.dataset);
     const recon = reconcile(context.dataset);
+    const empresa = context.dataset.company.cnpj;
 
-    const proprias = recon.efdOnly.filter((invoice) => scopeOf(null, invoice) === 'SAIDA_PROPRIA');
-    const entradas = recon.efdOnly.filter((invoice) => scopeOf(null, invoice) === 'ENTRADA_TERCEIRO');
-    const indefinidos = recon.efdOnly.filter((invoice) => scopeOf(null, invoice) === 'INDEFINIDO');
+    const proprias = recon.efdOnly.filter((invoice) => scopeOf(empresa, null, invoice) === 'SAIDA_PROPRIA');
+    const entradas = recon.efdOnly.filter((invoice) => scopeOf(empresa, null, invoice) === 'ENTRADA_TERCEIRO');
+    const indefinidos = recon.efdOnly.filter((invoice) => scopeOf(empresa, null, invoice) === 'INDEFINIDO');
 
     const findings: RuleFinding[] = proprias.map((invoice) => ({
       resultado: 'DIVERGENCIA',
@@ -421,36 +439,6 @@ export const attFis002: AuditRule = {
           trace,
         }),
       );
-    }
-
-    for (const duplicate of recon.efdDuplicates) {
-      findings.push({
-        resultado: 'DIVERGENCIA',
-        natureza: 'FATO',
-        titulo: `Chave escriturada mais de uma vez — ${describeInvoice(duplicate.invoice)}`,
-        descricao:
-          `A chave de acesso ${duplicate.key} aparece em ${duplicate.occurrences.length} registros C100 da EFD ` +
-          'ICMS/IPI. Cruzamentos por chave consideram apenas a primeira ocorrência.',
-        documento: duplicate.key,
-        analiseHumana:
-          'Escrituração em duplicidade altera a apuração do período. Confirme nas linhas indicadas se os registros ' +
-          'se referem ao mesmo documento antes de concluir.',
-        evidencias: [
-          trace.evidence('Chave de acesso', 'Chave repetida na escrituração', duplicate.key, {
-            source: 'EFD_ICMS_IPI',
-            field: 'CHV_NFE',
-            reference: duplicate.key,
-          }),
-          ...duplicate.occurrences.map((origem, index) =>
-            trace.evidence(
-              `Ocorrência ${index + 1}`,
-              'Linha do arquivo da EFD em que a chave foi escriturada',
-              origem.lineNumber === null ? 'linha não registrada' : `linha ${origem.lineNumber}`,
-              { source: 'EFD_ICMS_IPI', from: origem, field: 'CHV_NFE' },
-            ),
-          ),
-        ],
-      });
     }
 
     const semChave = recon.efdWithoutKey.filter((invoice) => KEYED_MODELS.has(invoice.model ?? ''));
@@ -625,33 +613,161 @@ function valueComparisonRule(spec: ValueRuleSpec): AuditRule {
   };
 }
 
-const ESCOPO_TODOS: readonly FiscalScope[] = ['SAIDA_PROPRIA', 'ENTRADA_TERCEIRO', 'INDEFINIDO'];
 const ESCOPO_SAIDA: readonly FiscalScope[] = ['SAIDA_PROPRIA'];
 
-export const attFis003 = valueComparisonRule({
+/**
+ * ATT-FIS-003 — valor total do documento.
+ *
+ * A comparação deixa de ser trivial no período de transição da reforma
+ * tributária: o total do XML e o `VL_DOC` escriturado podem computar IBS, CBS e
+ * Imposto Seletivo de formas diferentes. A regra apura as duas leituras — o
+ * total bruto e o total líquido dos novos tributos declarados — e só afirma
+ * divergência quando **ambas** divergem. Quando a composição não pode ser
+ * determinada, o resultado é indício, nunca divergência.
+ */
+export const attFis003: AuditRule = {
   id: 'att-fis-003',
   codigo: 'ATT-FIS-003',
-  versao: '2.0.0',
+  versao: '3.0.0',
   nome: 'Valor total do documento divergente entre XML e EFD',
-  descricao: 'Compara o valor total do documento no XML com o campo VL_DOC do registro C100.',
+  descricao:
+    'Compara o valor total do documento no XML com o campo VL_DOC do registro C100, verificando a composição do ' +
+    'total quando o documento é do período de transição da reforma tributária.',
+  modulo: 'FISCAL',
   gravidade: 'ALTA',
+  documentosNecessarios: [...REQUIRED],
+  toleranciaPadrao: DEFAULT_TOLERANCE,
   limitacoes:
-    'A diferença é um fato aritmético. Documentos complementares, de ajuste e de devolução são comparados, porém a ' +
-    'diferença é apresentada como indício, com o campo que justifica a ressalva.',
-  originLabel: 'Valor total no XML',
-  targetLabel: 'Valor escriturado (VL_DOC)',
-  xmlOrigin: 'Total do documento declarado no XML',
-  xmlField: 'total/ICMSTot/vNF',
-  efdOrigin: 'Valor total do documento escriturado no registro C100',
-  efdField: 'VL_DOC',
-  pick: (invoice) => invoice.totals.total,
-  analiseHumana:
-    'Verifique se há documento complementar, ajuste posterior ou escrituração parcial antes de concluir por erro.',
-  // O total do documento não muda conforme quem escritura: é comparável nos
-  // dois sentidos da operação.
-  escoposComparaveis: ESCOPO_TODOS,
-  motivoEscopoExcluido: '',
-});
+    'A diferença é um fato aritmético. A partir do exercício de ' +
+    `${REFORM_TRANSITION_YEAR}, o total do documento e o valor escriturado podem computar IBS, CBS e Imposto ` +
+    'Seletivo de formas diferentes; a regra calcula o valor comparável a partir do que o XML declara e NÃO afirma ' +
+    'qual composição é a correta — isso é matéria do Guia Prático da EFD ICMS/IPI em vigor e exige conferência por ' +
+    'profissional habilitado. Sem os grupos de IBS/CBS/IS no XML, a composição não é apurada e a diferença sai como ' +
+    'indício. Documentos complementares, de ajuste e de devolução também são rebaixados a indício.',
+  executar(context) {
+    const blocked = notVerified(context, 'ATT-FIS-003');
+    if (blocked) return blocked;
+
+    const trace = tracer(context.dataset);
+    const recon = reconcile(context.dataset);
+    const competencia = context.dataset.competencia ?? null;
+
+    const findings: RuleFinding[] = [];
+    let correct = 0;
+
+    for (const pair of recon.pairs) {
+      const composition = comparableTotal(pair.xml, competencia);
+      const vlDoc = pair.efd.totals.total;
+
+      const bruto = compareValues(composition.vNF, vlDoc, context.config.tolerancia);
+      const liquido = compareValues(composition.comparavel, vlDoc, context.config.tolerancia);
+
+      // Qualquer das duas leituras conciliando encerra a conferência: o valor
+      // escriturado corresponde ao documento sob alguma composição declarada.
+      if (bruto.withinTolerance || liquido.withinTolerance) {
+        correct += 1;
+        continue;
+      }
+
+      const ressalvas = blockingCaveats(pair);
+      const composicaoIndeterminada = composition.status === 'INDETERMINADA';
+      const indicio = ressalvas.length > 0 || composicaoIndeterminada;
+
+      const motivos = [
+        ...(composicaoIndeterminada
+          ? ['a composição do total não pôde ser determinada a partir do XML']
+          : []),
+        ...ressalvas.map((item) => item.titulo.toLowerCase()),
+      ];
+
+      findings.push({
+        resultado: indicio ? 'ALERTA' : 'DIVERGENCIA',
+        natureza: indicio ? 'INDICIO' : 'FATO',
+        titulo: `Valor total do documento divergente entre XML e EFD — ${describeInvoice(pair.xml)}`,
+        descricao:
+          `Valor comparável do XML: ${formatBRL(composition.comparavel)}. Valor escriturado (VL_DOC): ` +
+          `${formatBRL(vlDoc)}. Diferença de ${formatBRL(liquido.difference)}. ${liquido.toleranceLabel}` +
+          (composition.status === 'DETERMINADA'
+            ? ` Comparação também conferida sobre o total bruto (${formatBRL(composition.vNF)}), que igualmente ` +
+              'não concilia.'
+            : '') +
+          (motivos.length > 0 ? ` Apresentado como indício: ${motivos.join('; ')}.` : ''),
+        documento: invoiceReference(pair.xml),
+        rotuloOrigem: 'Valor comparável do XML',
+        valorOrigem: composition.comparavel,
+        rotuloDestino: 'Valor escriturado (VL_DOC)',
+        valorDestino: vlDoc,
+        diferenca: liquido.difference,
+        analiseHumana: [
+          ...(composicaoIndeterminada
+            ? [
+                'O documento é do período de transição da reforma tributária e o XML não declara IBS, CBS nem ' +
+                  'Imposto Seletivo. Confirme a composição do valor escriturado contra o Guia Prático em vigor ' +
+                  'antes de tratar a diferença como erro.',
+              ]
+            : []),
+          ...(composition.status === 'DETERMINADA'
+            ? [
+                'A composição usada está detalhada nas evidências. Confirme, contra o Guia Prático em vigor, se os ' +
+                  'novos tributos devem ou não integrar o VL_DOC no exercício do documento.',
+              ]
+            : []),
+          ...ressalvas.map((item) => item.explicacao),
+          'Verifique se há documento complementar, ajuste posterior ou escrituração parcial antes de concluir por erro.',
+        ].join(' '),
+        evidencias: [
+          keyEvidence(trace, pair.xml, pair.key),
+          scopeEvidence(trace, pair.scope),
+          ...compositionEvidences(trace, pair, composition, vlDoc),
+          trace.evidence('Tolerância aplicada', 'Configuração da regra nesta organização', liquido.toleranceLabel),
+          ...caveatEvidences(trace, pair.ressalvas),
+        ],
+      });
+    }
+
+    return { cruzamentosCorretos: correct, findings: truncate(findings, 'ATT-FIS-003', trace) };
+  },
+};
+
+/**
+ * Evidências da composição do total, na ordem em que o auditor as confere:
+ * `vNF original`, as deduções declaradas, o `valor comparável` e o `VL_DOC`.
+ */
+function compositionEvidences(
+  trace: Tracer,
+  pair: DocumentPair,
+  composition: ComparableTotal,
+  vlDoc: Cents,
+): EvidenceDraft[] {
+  const linhas = compositionLines(composition, vlDoc).map((linha) =>
+    trace.evidence(linha.label, 'Composição do valor total do documento', linha.value, {
+      source: linha.field === 'VL_DOC' ? 'EFD_ICMS_IPI' : pair.xml.source,
+      from: linha.field === 'VL_DOC' ? pair.efd.origin : pair.xml.origin,
+      field: linha.field,
+    }),
+  );
+
+  return [
+    trace.evidence('Composição utilizada', composition.explicacao, COMPOSITION_LABELS[composition.status]),
+    ...linhas,
+    ...(composition.readFields.length > 0
+      ? [
+          trace.evidence(
+            'Elementos lidos do XML',
+            'Elementos de IBS, CBS e Imposto Seletivo efetivamente encontrados no documento',
+            composition.readFields.join(' · '),
+            { source: pair.xml.source, from: pair.xml.origin },
+          ),
+        ]
+      : []),
+  ];
+}
+
+const COMPOSITION_LABELS: Readonly<Record<ComparableTotal['status'], string>> = {
+  ANTERIOR_A_TRANSICAO: 'Comparação direta (documento anterior à transição)',
+  DETERMINADA: 'Total líquido de IBS, CBS e IS declarados no XML',
+  INDETERMINADA: 'Composição não apurada — o XML não declara IBS, CBS nem IS',
+};
 
 export const attFis004 = valueComparisonRule({
   id: 'att-fis-004',
@@ -935,6 +1051,242 @@ export const attFis007: AuditRule = {
   },
 };
 
+// -----------------------------------------------------------------------------
+// ATT-FIS-008 — duplicidade de escrituração
+// -----------------------------------------------------------------------------
+
+export const attFis008: AuditRule = {
+  id: 'att-fis-008',
+  codigo: 'ATT-FIS-008',
+  versao: '1.0.0',
+  nome: 'Mesma chave de acesso escriturada mais de uma vez na EFD ICMS/IPI',
+  descricao:
+    'Localiza chaves de acesso que aparecem em mais de um registro C100 do mesmo conjunto de arquivos, exibindo cada ' +
+    'ocorrência com linha, valor, COD_SIT, sentido da operação e arquivo.',
+  modulo: 'FISCAL',
+  gravidade: 'ALTA',
+  documentosNecessarios: ['EFD_ICMS_IPI'],
+  toleranciaPadrao: DEFAULT_TOLERANCE,
+  limitacoes:
+    'A regra afirma o FATO de a chave constar em mais de um registro. Não conclui que a escrituração seja indevida: ' +
+    'o mesmo documento pode ser escriturado mais de uma vez por motivo legítimo — estabelecimentos distintos no mesmo ' +
+    'arquivo, ou registros com naturezas diferentes. A comparação entre as ocorrências é apresentada para que o ' +
+    'auditor decida.',
+  executar(context) {
+    // Depende apenas da escrituração: o XML não participa desta conferência.
+    if (!context.dataset.availableSources.has('EFD_ICMS_IPI')) {
+      return {
+        cruzamentosCorretos: 0,
+        findings: [
+          {
+            resultado: 'NAO_VERIFICADO',
+            natureza: 'FATO',
+            titulo: 'ATT-FIS-008: cruzamento não executado',
+            descricao: 'Documento necessário ausente nesta auditoria: EFD ICMS/IPI.',
+            evidencias: [],
+          },
+        ],
+        naoAplicavel: 'Documento necessário ausente: EFD ICMS/IPI.',
+      };
+    }
+
+    const trace = tracer(context.dataset);
+    const recon = reconcile(context.dataset);
+
+    const findings: RuleFinding[] = recon.efdDuplicates.map((duplicate) => {
+      const valores = duplicate.occurrences.map((occurrence) => occurrence.totals.total);
+      const valoresIguais = valores.every((valor) => valor === valores[0]);
+      const primeira = duplicate.occurrences[0] as Invoice;
+
+      return {
+        resultado: 'DIVERGENCIA',
+        natureza: 'FATO',
+        titulo: `Chave escriturada ${duplicate.occurrences.length} vezes — ${describeInvoice(primeira)}`,
+        descricao:
+          `A chave de acesso ${duplicate.key} consta em ${duplicate.occurrences.length} registros C100. ` +
+          (valoresIguais
+            ? `Todas as ocorrências trazem o mesmo valor (${formatBRL(valores[0] ?? (0 as Cents))}).`
+            : 'As ocorrências trazem valores diferentes entre si.') +
+          ' Os cruzamentos por chave desta auditoria consideram a primeira ocorrência.',
+        documento: duplicate.key,
+        rotuloOrigem: 'Ocorrências escrituradas',
+        rotuloDestino: 'Documento único esperado',
+        analiseHumana:
+          'Escrituração em duplicidade altera a apuração do período. Confirme, nas linhas indicadas, se os registros ' +
+          'se referem ao mesmo documento e ao mesmo estabelecimento antes de concluir por erro: a regra afirma a ' +
+          'repetição da chave, não a sua causa.',
+        evidencias: [
+          trace.evidence('Chave de acesso', 'Chave repetida na escrituração', duplicate.key, {
+            source: 'EFD_ICMS_IPI',
+            field: 'CHV_NFE',
+            reference: duplicate.key,
+          }),
+          trace.evidence(
+            'Quantidade de ocorrências',
+            'Contagem de registros C100 com a mesma chave',
+            String(duplicate.occurrences.length),
+            { source: 'EFD_ICMS_IPI', field: 'CHV_NFE' },
+          ),
+          ...duplicate.occurrences.flatMap((occurrence, index) => describeOccurrence(trace, occurrence, index + 1)),
+          trace.evidence(
+            'Tolerância',
+            'O cruzamento é por repetição de chave, não por valor: nenhuma tolerância se aplica',
+            'Não aplicável',
+          ),
+        ],
+      };
+    });
+
+    return {
+      // Cada chave conferida e não repetida é um cruzamento correto.
+      cruzamentosCorretos: Math.max(0, recon.totals.efdConsiderados - recon.efdDuplicates.length),
+      findings: truncate(findings, 'ATT-FIS-008', trace),
+    };
+  },
+};
+
+/** Linha, valor, COD_SIT, sentido e arquivo de uma ocorrência duplicada. */
+function describeOccurrence(trace: Tracer, occurrence: Invoice, position: number): EvidenceDraft[] {
+  const prefixo = `Ocorrência ${position}`;
+  return [
+    trace.evidence(
+      `${prefixo}: linha e arquivo`,
+      'Registro C100 em que a chave foi escriturada',
+      occurrence.origin.lineNumber === null
+        ? 'linha não registrada'
+        : `linha ${occurrence.origin.lineNumber}`,
+      { source: 'EFD_ICMS_IPI', from: occurrence.origin, field: 'CHV_NFE' },
+    ),
+    trace.money(`${prefixo}: valor`, 'Valor total escriturado no registro', occurrence.totals.total, {
+      source: 'EFD_ICMS_IPI',
+      from: occurrence.origin,
+      field: 'VL_DOC',
+    }),
+    trace.evidence(
+      `${prefixo}: situação`,
+      'Situação do documento declarada na escrituração',
+      occurrence.purposeCode === null
+        ? 'COD_SIT não declarado'
+        : `COD_SIT = ${occurrence.purposeCode} (${occurrence.naturezaOperacao ?? 'sem descrição'})`,
+      { source: 'EFD_ICMS_IPI', from: occurrence.origin, field: 'COD_SIT' },
+    ),
+    trace.evidence(
+      `${prefixo}: sentido`,
+      'Sentido da operação declarado na escrituração',
+      DIRECTION_LABELS[occurrence.direction],
+      { source: 'EFD_ICMS_IPI', from: occurrence.origin, field: 'IND_OPER' },
+    ),
+  ];
+}
+
+const DIRECTION_LABELS: Readonly<Record<Invoice['direction'], string>> = {
+  SAIDA: 'Saída',
+  ENTRADA: 'Entrada',
+  INDEFINIDA: 'Não declarado',
+};
+
+// -----------------------------------------------------------------------------
+// ATT-FIS-009 — situação do documento
+// -----------------------------------------------------------------------------
+
+const STATUS_LABELS: Readonly<Record<Invoice['status'], string>> = {
+  AUTORIZADA: 'Autorizada',
+  CANCELADA: 'Cancelada',
+  DENEGADA: 'Denegada',
+  INUTILIZADA: 'Inutilizada',
+  INDEFINIDA: 'Não declarada',
+};
+
+export const attFis009: AuditRule = {
+  id: 'att-fis-009',
+  codigo: 'ATT-FIS-009',
+  versao: '1.0.0',
+  nome: 'Situação do documento divergente entre XML e EFD ICMS/IPI',
+  descricao:
+    'Confronta a situação do documento declarada no XML (protocolo de autorização e eventos) com a situação ' +
+    'escriturada no campo COD_SIT do registro C100.',
+  modulo: 'FISCAL',
+  gravidade: 'ALTA',
+  documentosNecessarios: [...REQUIRED],
+  toleranciaPadrao: DEFAULT_TOLERANCE,
+  limitacoes:
+    'Só há correspondência inequívoca entre as duas fontes para os estados autorizada e cancelada. Denegação, ' +
+    'inutilização e situação não declarada não têm equivalente exato entre o leiaute do XML e o COD_SIT lido, e ' +
+    'nesses casos a ocorrência é classificada como indício. A regra não determina qual das duas fontes está correta: ' +
+    'um cancelamento posterior ao encerramento da escrituração pode explicar a diferença.',
+  executar(context) {
+    const blocked = notVerified(context, 'ATT-FIS-009');
+    if (blocked) return blocked;
+
+    const trace = tracer(context.dataset);
+    const recon = reconcile(context.dataset);
+
+    const findings: RuleFinding[] = recon.statusMismatches.map((mismatch) => {
+      const scope = scopeOf(context.dataset.company.cnpj, mismatch.xml, mismatch.efd);
+      const canceladoEscriturado =
+        mismatch.xml.status === 'CANCELADA' && mismatch.efd.status === 'AUTORIZADA';
+
+      return {
+        resultado: mismatch.comparavel ? 'DIVERGENCIA' : 'ALERTA',
+        natureza: mismatch.comparavel ? 'FATO' : 'INDICIO',
+        titulo: `Situação divergente entre XML e EFD — ${describeInvoice(mismatch.xml)}`,
+        descricao:
+          `Situação no XML: ${STATUS_LABELS[mismatch.xml.status]}. Situação na EFD: ` +
+          `${STATUS_LABELS[mismatch.efd.status]}` +
+          (mismatch.efd.purposeCode ? ` (COD_SIT = ${mismatch.efd.purposeCode})` : '') +
+          '.' +
+          (mismatch.comparavel
+            ? ''
+            : ' As duas situações não têm correspondência direta entre os leiautes e a ocorrência é apresentada ' +
+              'como indício.'),
+        documento: invoiceReference(mismatch.xml),
+        rotuloOrigem: 'Situação no XML',
+        rotuloDestino: 'Situação na EFD',
+        analiseHumana: canceladoEscriturado
+          ? 'Documento cancelado no XML e escriturado como regular altera a apuração do período. Verifique a data do ' +
+            'evento de cancelamento: cancelamento posterior ao encerramento da escrituração explica a diferença e ' +
+            'exige retificação, não correção do documento.'
+          : 'Confirme qual das duas fontes reflete a situação vigente do documento. A regra afirma que as duas ' +
+            'declarações não coincidem, não qual delas está correta.',
+        evidencias: [
+          keyEvidence(trace, mismatch.xml, mismatch.key),
+          scopeEvidence(trace, scope),
+          trace.evidence(
+            'Situação no XML',
+            'Situação apurada pelo protocolo de autorização e pelos eventos do documento',
+            STATUS_LABELS[mismatch.xml.status],
+            { source: mismatch.xml.source, from: mismatch.xml.origin, field: 'cStat / tpEvento' },
+          ),
+          trace.evidence(
+            'Situação na EFD',
+            'Situação do documento declarada na escrituração',
+            mismatch.efd.purposeCode === null
+              ? STATUS_LABELS[mismatch.efd.status]
+              : `COD_SIT = ${mismatch.efd.purposeCode} (${mismatch.efd.naturezaOperacao ?? STATUS_LABELS[mismatch.efd.status]})`,
+            { source: 'EFD_ICMS_IPI', from: mismatch.efd.origin, field: 'COD_SIT' },
+          ),
+          trace.money(
+            'Valor escriturado',
+            'Valor total do documento no registro C100, para dimensionar o efeito',
+            mismatch.efd.totals.total,
+            { source: 'EFD_ICMS_IPI', from: mismatch.efd.origin, field: 'VL_DOC' },
+          ),
+          trace.evidence(
+            'Tolerância',
+            'A comparação é de situação, não de valor: nenhuma tolerância se aplica',
+            'Não aplicável',
+          ),
+        ],
+      };
+    });
+
+    return {
+      cruzamentosCorretos: Math.max(0, recon.pairs.length - recon.statusMismatches.length),
+      findings: truncate(findings, 'ATT-FIS-009', trace),
+    };
+  },
+};
+
 export const FISCAL_RULES: readonly AuditRule[] = [
   attFis001,
   attFis002,
@@ -943,4 +1295,6 @@ export const FISCAL_RULES: readonly AuditRule[] = [
   attFis005,
   attFis006,
   attFis007,
+  attFis008,
+  attFis009,
 ];

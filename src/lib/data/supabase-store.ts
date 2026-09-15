@@ -15,6 +15,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { onlyDigits } from '@/lib/core/cnpj';
 import type { Competencia } from '@/lib/core/competencia';
 import {
+  DEFAULT_INDICIO_FACTOR,
   DEFAULT_SCORE_WEIGHTS,
   type Audit,
   type AuditComment,
@@ -30,6 +31,7 @@ import {
 } from '@/lib/domain/entities';
 import type { TaxRegime } from '@/lib/domain/model';
 import { MAX_UPLOAD_BYTES } from './local-store';
+import { describeWriteError } from './schema-check';
 import {
   toAudit,
   toCfopRule,
@@ -99,6 +101,7 @@ export class SupabaseStore implements DataStore {
       return {
         organizationId: this.organizationId,
         scoreWeights: DEFAULT_SCORE_WEIGHTS,
+        indicioFactor: DEFAULT_INDICIO_FACTOR,
         maxUploadBytes: MAX_UPLOAD_BYTES,
         updatedAt: new Date().toISOString(),
       };
@@ -117,6 +120,7 @@ export class SupabaseStore implements DataStore {
         {
           organization_id: this.organizationId,
           score_weights: merged.scoreWeights,
+          indicio_factor: merged.indicioFactor,
           max_upload_bytes: merged.maxUploadBytes,
           updated_at: new Date().toISOString(),
         },
@@ -446,6 +450,7 @@ export class SupabaseStore implements DataStore {
         cfop_principal: invoice.cfopPrincipal,
         cfops: invoice.cfops,
         totals: invoice.totals,
+        reform_taxes: invoice.reformTaxes,
         file_id: invoice.origin.fileId,
         file_name: invoice.origin.fileName,
         origin_record_code: invoice.origin.recordCode,
@@ -453,7 +458,7 @@ export class SupabaseStore implements DataStore {
         origin_entry_name: invoice.origin.entryName,
       }));
       const inserted = await this.client.from('invoices').insert(invoiceRows);
-      if (inserted.error) throw new Error(`Falha ao gravar documentos: ${inserted.error.message}`);
+      if (inserted.error) throw new Error(describeWriteError('A gravação dos documentos', inserted.error));
 
       const itemRows = slice.flatMap((invoice) =>
         invoice.items.map((item, position) => ({
@@ -648,7 +653,7 @@ export class SupabaseStore implements DataStore {
       reviewed_at: finding.reviewedAt,
     }));
     const inserted = await this.client.from('audit_findings').insert(rows);
-    if (inserted.error) throw new Error(`Falha ao gravar divergências: ${inserted.error.message}`);
+    if (inserted.error) throw new Error(describeWriteError('A gravação das divergências', inserted.error));
 
     const evidenceRows = findings.flatMap((finding) =>
       finding.evidence.map((item) => ({
@@ -670,7 +675,7 @@ export class SupabaseStore implements DataStore {
     if (evidenceRows.length > 0) {
       const evidenceInserted = await this.client.from('audit_finding_evidence').insert(evidenceRows);
       if (evidenceInserted.error) {
-        throw new Error(`Falha ao gravar evidências: ${evidenceInserted.error.message}`);
+        throw new Error(describeWriteError('A gravação das evidências', evidenceInserted.error));
       }
     }
   }

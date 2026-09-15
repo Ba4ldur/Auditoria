@@ -395,9 +395,22 @@ export const DEFAULT_SCORE_WEIGHTS: ScoreWeights = Object.freeze({
   CRITICA: 15,
 });
 
+/**
+ * Fator aplicado à penalidade das ocorrências de natureza `INDICIO`.
+ *
+ * Um indício é uma diferença cuja leitura fiscal depende de análise humana: a
+ * comparação apurou um fato, mas há causa legítima conhecida que pode
+ * explicá-lo. Pesá-lo como uma divergência confirmada tornaria o score
+ * pessimista a ponto de deixar de informar; ignorá-lo o tornaria cego. O padrão
+ * é metade do peso da gravidade, ajustável por organização.
+ */
+export const DEFAULT_INDICIO_FACTOR = 0.5;
+
 export interface OrganizationSettings {
   readonly organizationId: string;
   readonly scoreWeights: ScoreWeights;
+  /** Fator de 0 a 1 aplicado à penalidade das ocorrências de natureza INDICIO. */
+  readonly indicioFactor: number;
   readonly maxUploadBytes: number;
   readonly updatedAt: string;
 }

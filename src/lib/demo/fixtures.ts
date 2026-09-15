@@ -60,6 +60,12 @@ export interface NfeSpec {
   readonly cancelada?: boolean;
   /** Finalidade da NF-e (`ide/finNFe`): 1 normal, 2 complementar, 3 ajuste, 4 devolução. */
   readonly finNFe?: '1' | '2' | '3' | '4';
+  /**
+   * Tributos da reforma declarados no grupo de totais, em reais. Ausente
+   * significa XML sem os grupos — que é como o sistema distingue "não declarado"
+   * de "declarado zero".
+   */
+  readonly reforma?: { readonly ibs?: number; readonly cbs?: number; readonly is?: number };
 }
 
 function money(value: number): string {
@@ -68,6 +74,31 @@ function money(value: number): string {
 
 function quantity(value: number): string {
   return value.toFixed(4);
+}
+
+/**
+ * Grupos de totais de IBS, CBS e Imposto Seletivo.
+ *
+ * Emitidos apenas quando a fixture os declara: um XML sem os grupos é o caso
+ * que exercita a recusa do motor em concluir sobre composição desconhecida.
+ */
+function reformaTotais(spec: NfeSpec): string {
+  const reforma = spec.reforma;
+  if (!reforma) return '';
+
+  const linhas: string[] = [];
+  if (reforma.ibs !== undefined || reforma.cbs !== undefined) {
+    linhas.push('        <IBSCBSTot>');
+    if (reforma.ibs !== undefined) linhas.push(`          <vIBS>${money(reforma.ibs)}</vIBS>`);
+    if (reforma.cbs !== undefined) linhas.push(`          <vCBS>${money(reforma.cbs)}</vCBS>`);
+    linhas.push('        </IBSCBSTot>');
+  }
+  if (reforma.is !== undefined) {
+    linhas.push('        <ISTot>');
+    linhas.push(`          <vIS>${money(reforma.is)}</vIS>`);
+    linhas.push('        </ISTot>');
+  }
+  return linhas.length === 0 ? '' : `${linhas.join('\n')}\n`;
 }
 
 export function nfeAccessKey(spec: NfeSpec, ufCode = DEMO_COMPANY.ufCode): string {
@@ -213,7 +244,7 @@ ${items}
           <vOutro>0.00</vOutro>
           <vNF>${money(totals.total)}</vNF>
         </ICMSTot>
-      </total>
+${reformaTotais(spec)}      </total>
     </infNFe>
   </NFe>
 ${protocol}

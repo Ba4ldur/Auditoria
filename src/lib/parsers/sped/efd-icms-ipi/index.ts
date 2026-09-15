@@ -193,6 +193,10 @@ function toInvoice(
       baseCofins: sumCents(document.items.map((item) => item.vlBcCofins)),
       cofins: document.vlCofins,
     },
+    // O leiaute do C100 mapeado por este parser não possui campos de IBS, CBS ou
+    // Imposto Seletivo. Declarar `null` mantém a distinção entre "não declarado"
+    // e "zero", da qual as regras dependem para não concluir sobre o que não leram.
+    reformTaxes: null,
     items,
     origin: recordOrigin({
       fileId: context.fileId,

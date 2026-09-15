@@ -1,7 +1,7 @@
 /**
  * Reconciliação XML de NF-e/NFC-e × EFD ICMS/IPI.
  *
- * As regras ATT-FIS-001 a ATT-FIS-006 comparam o mesmo universo de documentos
+ * As regras ATT-FIS comparam o mesmo universo de documentos
  * sob ângulos diferentes. Pareá-los uma vez, aqui, tem três consequências que
  * importam para a auditoria:
  *
@@ -25,9 +25,10 @@
  * conclusiva; a conclusão fiscal continua sendo do auditor.
  */
 
+import { onlyDigits } from '@/lib/core/cnpj';
 import type { Invoice, RecordOrigin } from '@/lib/domain/model';
 import type { AuditDataset } from '@/lib/normalization/dataset';
-import { duplicateOriginsOf, invoicesFrom, xmlInvoices } from '@/lib/normalization/dataset';
+import { duplicatesOf, invoicesFrom, xmlInvoices } from '@/lib/normalization/dataset';
 import { isEffective } from './rules/helpers';
 
 /** Versão desta camada; entra nas evidências junto com a versão da regra. */
@@ -81,8 +82,30 @@ export interface DocumentPair {
 /** Documento cuja chave aparece mais de uma vez dentro da mesma obrigação. */
 export interface DuplicatedDocument {
   readonly key: string;
-  readonly invoice: Invoice;
-  readonly occurrences: readonly RecordOrigin[];
+  /**
+   * Todas as ocorrências da chave, na ordem em que foram lidas. Cada uma traz o
+   * próprio valor, COD_SIT, sentido da operação, arquivo e linha: a regra que
+   * reporta a duplicidade precisa mostrar em que os registros diferem, porque é
+   * isso que distingue um erro de escrituração de um documento legitimamente
+   * escriturado duas vezes com naturezas diferentes.
+   */
+  readonly occurrences: readonly Invoice[];
+}
+
+/**
+ * Documento cuja situação declarada no XML não corresponde à situação
+ * escriturada na EFD.
+ *
+ * `comparavel` é falso quando um dos lados não declara a situação, ou quando as
+ * situações pertencem a eixos que não se correspondem diretamente (denegação e
+ * inutilização não têm equivalente exato no COD_SIT lido). Nesses casos a regra
+ * reporta indício, nunca fato.
+ */
+export interface StatusMismatch {
+  readonly key: string;
+  readonly xml: Invoice;
+  readonly efd: Invoice;
+  readonly comparavel: boolean;
 }
 
 export interface Reconciliation {
@@ -98,6 +121,14 @@ export interface Reconciliation {
   readonly efdIneffective: readonly Invoice[];
   /** Chaves repetidas dentro do próprio arquivo da EFD. */
   readonly efdDuplicates: readonly DuplicatedDocument[];
+  /**
+   * Pares cuja situação diverge entre XML e EFD.
+   *
+   * São apurados sobre o universo completo, antes do filtro de efeito fiscal:
+   * o caso mais relevante — documento cancelado no XML e escriturado como
+   * regular — desapareceria se os dois lados fossem filtrados primeiro.
+   */
+  readonly statusMismatches: readonly StatusMismatch[];
   /**
    * NFC-e presentes no XML quando a EFD não escritura nenhum documento de
    * modelo 65. A ausência pode significar escrituração por registros de
@@ -131,7 +162,7 @@ function compute(dataset: AuditDataset): Reconciliation {
   const efd = efdAll.filter(isEffective);
 
   const efdIndex = new Map<string, Invoice>();
-  const efdDuplicateOrigins = new Map<string, RecordOrigin[]>();
+  const efdDuplicateOccurrences = new Map<string, Invoice[]>();
   const efdWithoutKey: Invoice[] = [];
 
   for (const invoice of efd) {
@@ -142,18 +173,13 @@ function compute(dataset: AuditDataset): Reconciliation {
 
     const existing = efdIndex.get(invoice.accessKey);
     if (existing) {
-      const origins = efdDuplicateOrigins.get(invoice.accessKey) ?? [existing.origin];
-      origins.push(invoice.origin);
-      efdDuplicateOrigins.set(invoice.accessKey, origins);
+      const occurrences = efdDuplicateOccurrences.get(invoice.accessKey) ?? [existing];
+      occurrences.push(invoice);
+      efdDuplicateOccurrences.set(invoice.accessKey, occurrences);
       continue;
     }
 
     efdIndex.set(invoice.accessKey, invoice);
-
-    // Repetições que a normalização já havia colapsado. Sem isto, a mesma chave
-    // escriturada duas vezes no C100 desapareceria antes de chegar à regra.
-    const colapsadas = duplicateOriginsOf(dataset, 'EFD_ICMS_IPI', invoice.accessKey);
-    if (colapsadas.length > 1) efdDuplicateOrigins.set(invoice.accessKey, [...colapsadas]);
   }
 
   const xmlIndex = new Map<string, Invoice>();
@@ -176,7 +202,7 @@ function compute(dataset: AuditDataset): Reconciliation {
       key,
       xml: invoice,
       efd: counterpart,
-      scope: scopeOf(invoice, counterpart),
+      scope: scopeOf(dataset.company.cnpj, invoice, counterpart),
       ressalvas: caveatsFor(invoice, counterpart),
     });
   }
@@ -185,13 +211,21 @@ function compute(dataset: AuditDataset): Reconciliation {
     (invoice) => invoice.accessKey !== null && !xmlIndex.has(invoice.accessKey),
   );
 
-  const efdDuplicates: DuplicatedDocument[] = [...efdDuplicateOrigins.entries()].map(
-    ([key, occurrences]) => ({
-      key,
-      invoice: efdIndex.get(key) as Invoice,
-      occurrences,
-    }),
-  );
+  // A deduplicação da normalização já havia colapsado as repetições antes de o
+  // dataset chegar aqui; sem consultá-la, a mesma chave escriturada duas vezes
+  // no C100 desapareceria antes de qualquer regra vê-la. O laço acima cobre o
+  // que sobrar dentro de uma mesma lista.
+  for (const invoice of efdAll) {
+    if (!invoice.accessKey || efdDuplicateOccurrences.has(invoice.accessKey)) continue;
+    const colapsadas = duplicatesOf(dataset, 'EFD_ICMS_IPI', invoice.accessKey);
+    if (colapsadas.length > 1) efdDuplicateOccurrences.set(invoice.accessKey, [...colapsadas]);
+  }
+
+  const efdDuplicates: DuplicatedDocument[] = [...efdDuplicateOccurrences.entries()]
+    .map(([key, occurrences]) => ({ key, occurrences }))
+    .sort((a, b) => a.key.localeCompare(b.key));
+
+  const statusMismatches = findStatusMismatches(xmlAll, efdAll);
 
   const efdHasModel65 = efdAll.some((invoice) => invoice.model === '65');
   const nfceSemModelo65NaEfd = efdHasModel65
@@ -207,22 +241,80 @@ function compute(dataset: AuditDataset): Reconciliation {
     xmlIneffective: xmlAll.filter((invoice) => !isEffective(invoice)),
     efdIneffective: efdAll.filter((invoice) => !isEffective(invoice)),
     efdDuplicates,
+    statusMismatches,
     nfceSemModelo65NaEfd,
     totals: { xmlConsiderados: xml.length, efdConsiderados: efd.length },
   };
 }
 
 /**
+ * Situações que o sistema sabe confrontar diretamente entre as duas fontes.
+ *
+ * `AUTORIZADA` e `CANCELADA` têm correspondência inequívoca: o XML traz o
+ * protocolo ou o evento de cancelamento, e o C100 traz o COD_SIT. `DENEGADA`,
+ * `INUTILIZADA` e `INDEFINIDA` não são tratadas como comparáveis, porque a
+ * correspondência entre os dois leiautes não é biunívoca e afirmar divergência
+ * ali seria conclusão sem lastro.
+ */
+const COMPARABLE_STATUSES = new Set(['AUTORIZADA', 'CANCELADA']);
+
+function findStatusMismatches(
+  xmlAll: readonly Invoice[],
+  efdAll: readonly Invoice[],
+): StatusMismatch[] {
+  const efdByKey = new Map<string, Invoice>();
+  for (const invoice of efdAll) {
+    if (invoice.accessKey && !efdByKey.has(invoice.accessKey)) efdByKey.set(invoice.accessKey, invoice);
+  }
+
+  const mismatches: StatusMismatch[] = [];
+  const seen = new Set<string>();
+
+  for (const xml of xmlAll) {
+    if (!xml.accessKey || seen.has(xml.accessKey)) continue;
+    seen.add(xml.accessKey);
+
+    const efd = efdByKey.get(xml.accessKey);
+    if (!efd || efd.status === xml.status) continue;
+
+    mismatches.push({
+      key: xml.accessKey,
+      xml,
+      efd,
+      comparavel: COMPARABLE_STATUSES.has(xml.status) && COMPARABLE_STATUSES.has(efd.status),
+    });
+  }
+
+  return mismatches;
+}
+
+/**
  * Sentido da operação sob a ótica da empresa auditada.
  *
- * A normalização do dataset já reescreveu a direção do XML comparando emitente
- * e destinatário com o CNPJ da empresa; o `IND_OPER` do C100 entra como segunda
- * fonte, para o caso de o XML não trazer os dois CNPJs.
+ * A ordem das fontes não é arbitrária:
+ *
+ *  1. **CNPJ do XML contra o da empresa.** É a única fonte que responde à
+ *     pergunta certa — de que lado da operação a empresa auditada está.
+ *  2. **`IND_OPER` do C100.** Declarado pela própria empresa na escrituração,
+ *     portanto também na ótica dela.
+ *
+ * O `tpNF` do XML fica **deliberadamente de fora**: ele declara o sentido sob a
+ * ótica do emitente, não da empresa auditada. Uma nota de venda emitida por um
+ * terceiro contra outro terceiro traz `tpNF = 1`, e aceitá-lo como "saída
+ * própria" faria o documento ser conferido pelos critérios de saída — o mesmo
+ * falso positivo que a separação por escopo existe para evitar.
  */
-export function scopeOf(xml: Invoice | null, efd: Invoice | null): FiscalScope {
-  const direction = xml?.direction ?? 'INDEFINIDA';
-  if (direction === 'SAIDA') return 'SAIDA_PROPRIA';
-  if (direction === 'ENTRADA') return 'ENTRADA_TERCEIRO';
+export function scopeOf(
+  companyCnpj: string,
+  xml: Invoice | null,
+  efd: Invoice | null,
+): FiscalScope {
+  const company = onlyDigits(companyCnpj);
+
+  if (xml && company !== '') {
+    if (onlyDigits(xml.emitterTaxId ?? '') === company) return 'SAIDA_PROPRIA';
+    if (onlyDigits(xml.recipientTaxId ?? '') === company) return 'ENTRADA_TERCEIRO';
+  }
 
   const booked = efd?.direction ?? 'INDEFINIDA';
   if (booked === 'SAIDA') return 'SAIDA_PROPRIA';

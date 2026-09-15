@@ -5,6 +5,12 @@
  * the audit. A mismatch is treated as blocking: data from a different taxpayer
  * is never merged into the dataset, because a single wrong file would
  * contaminate every cross-check of the competencia.
+ *
+ * O arquivo é aceito quando a empresa figura em QUALQUER dos polos da operação.
+ * Um XML de entrada é emitido por terceiro e traz o CNPJ do fornecedor como
+ * emitente; recusá-lo por isso inviabilizaria auditar entradas — e recusa
+ * silenciosa de metade dos documentos é pior do que não auditá-los, porque o
+ * relatório sai completo e errado.
  */
 
 import { formatCnpj, onlyDigits } from '@/lib/core/cnpj';
@@ -39,6 +45,24 @@ export function assessIdentity(
   }
 
   if (found !== expected) {
+    const related = identity.relatedTaxIds.map((taxId) => onlyDigits(taxId));
+
+    // A empresa é a contraparte: documento recebido de terceiro, legítimo na
+    // auditoria. O arquivo entra, e a condição fica registrada.
+    if (related.includes(expected)) {
+      messages.push({
+        level: 'INFO',
+        code: 'DOCUMENTO_DE_TERCEIRO',
+        message:
+          'Documento emitido por terceiro contra a empresa auditada. Aceito como operação de entrada.',
+        detail:
+          `Emitente: ${formatCnpj(found)}` +
+          (identity.legalName ? ` (${identity.legalName}).` : '.') +
+          ` Destinatário: ${formatCnpj(expected)} (${company.legalName}).`,
+      });
+      return { check: 'COMPATIVEL', blocking: false, messages };
+    }
+
     messages.push({
       level: 'ERRO',
       code: 'ARQUIVO_INCOMPATIVEL',
@@ -46,7 +70,10 @@ export function assessIdentity(
       detail:
         `Empresa selecionada: ${formatCnpj(expected)} (${company.legalName}). ` +
         `CNPJ encontrado no arquivo: ${formatCnpj(found)}` +
-        (identity.legalName ? ` (${identity.legalName}).` : '.'),
+        (identity.legalName ? ` (${identity.legalName}).` : '.') +
+        (related.length > 0
+          ? ` Demais partes declaradas no arquivo: ${related.map(formatCnpj).join(', ')}.`
+          : ''),
     });
     return { check: 'INCOMPATIVEL', blocking: true, messages };
   }

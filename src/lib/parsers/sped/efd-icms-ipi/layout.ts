@@ -32,6 +32,12 @@ export const COD_SIT_LABELS: Readonly<Record<string, string>> = {
 export const CANCELLED_COD_SIT = new Set(['02', '03']);
 export const DENIED_COD_SIT = new Set(['04']);
 export const VOID_COD_SIT = new Set(['05']);
+/** Documento complementar: escritura o valor complementado, não o total. */
+export const COMPLEMENTARY_COD_SIT = new Set(['06', '07']);
+/** Documento emitido com base em regime especial ou norma específica. */
+export const SPECIAL_REGIME_COD_SIT = new Set(['08']);
+/** Escrituração extemporânea, de documento regular (01) ou cancelado (03). */
+export const LATE_COD_SIT = new Set(['01', '03']);
 
 export interface EfdIcmsDocument {
   readonly indOper: string | null;

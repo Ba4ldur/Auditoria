@@ -541,6 +541,7 @@ modelo normalizado.
    export const attFisXxx: AuditRule = {
      id: 'att-fis-008',
      codigo: 'ATT-FIS-008',
+     versao: '1.0.0',
      nome: 'Nome exibido da regra',
      descricao: 'O que a regra compara.',
      modulo: 'FISCAL',
@@ -572,37 +573,124 @@ Regras da casa:
 - **Não verificar não é conformidade.** Documento ausente gera
   `NAO_VERIFICADO`, que não afeta o score.
 - **Tolerância vem da configuração**, nunca fixa no corpo da regra.
+- **Não pareie documentos por conta própria.** Regras que cruzam XML com EFD
+  ICMS/IPI leem `reconcile(dataset)`. O pareamento é calculado uma vez e
+  compartilhado; duas regras com pareamentos diferentes produziriam um relatório
+  internamente contraditório.
+- **Verifique o escopo antes de comparar.** Se a comparação não é válida para
+  entradas, declare isso e reporte `NAO_APLICAVEL` com o motivo, em uma
+  ocorrência agregada. Nunca compare em silêncio nem descarte em silêncio.
+- **Use o `tracer(dataset)`** para montar evidências: ele resolve a versão do
+  parser a partir do arquivo de origem. Informe sempre o `field` com o nome
+  oficial do leiaute.
+- **Incremente `versao`** sempre que mudar o critério, o universo avaliado ou a
+  classificação do resultado.
 
 ---
 
 ## 14. Regras implementadas
 
-| Código | Módulo | Compara |
-| --- | --- | --- |
-| `ATT-FIS-001` | Fiscal | XML de NF-e sem escrituração na EFD ICMS/IPI (pela chave) |
-| `ATT-FIS-002` | Fiscal | Registro C100 sem XML correspondente |
-| `ATT-FIS-003` | Fiscal | Valor total do documento: XML × `VL_DOC` |
-| `ATT-FIS-004` | Fiscal | Base de ICMS: XML × `VL_BC_ICMS` |
-| `ATT-FIS-005` | Fiscal | ICMS: XML × `VL_ICMS` |
-| `ATT-FIS-006` | Fiscal | CFOP predominante: XML × C170/C190 |
-| `ATT-FIS-007` | Fiscal | Quantidade de documentos: XML × EFD |
-| `ATT-FAT-001` | Faturamento | Documentos fiscais × receita bruta do PGDAS-D |
-| `ATT-FAT-002` | Faturamento | EFD ICMS/IPI × PGDAS-D |
-| `ATT-FAT-003` | Faturamento | EFD-Contribuições × PGDAS-D |
-| `ATT-FAT-004` | Faturamento | Documentos fiscais × receita da EFD-Contribuições |
-| `ATT-PIS-001` | Tributário | PIS dos documentos × apuração do registro M200 |
-| `ATT-COF-001` | Tributário | COFINS dos documentos × apuração do registro M600 |
+| Código | Módulo | Compara | Escopo |
+| --- | --- | --- | --- |
+| `ATT-FIS-001` | Fiscal | XML de NF-e sem escrituração na EFD ICMS/IPI (pela chave) | Saída, entrada, indefinido |
+| `ATT-FIS-002` | Fiscal | Registro C100 sem XML correspondente; chave escriturada em duplicidade | Saída, entrada, indefinido |
+| `ATT-FIS-003` | Fiscal | Valor total do documento: XML × `VL_DOC` | Saída, entrada, indefinido |
+| `ATT-FIS-004` | Fiscal | Base de ICMS: XML × `VL_BC_ICMS` | Somente saída própria |
+| `ATT-FIS-005` | Fiscal | ICMS: XML × `VL_ICMS` | Somente saída própria |
+| `ATT-FIS-006` | Fiscal | CFOP predominante: XML × C170/C190 | Somente saída própria |
+| `ATT-FIS-007` | Fiscal | Quantidade de documentos: XML × EFD | Saída, entrada, indefinido |
+| `ATT-FAT-001` | Faturamento | Documentos fiscais × receita bruta do PGDAS-D | — |
+| `ATT-FAT-002` | Faturamento | EFD ICMS/IPI × PGDAS-D | — |
+| `ATT-FAT-003` | Faturamento | EFD-Contribuições × PGDAS-D | — |
+| `ATT-FAT-004` | Faturamento | Documentos fiscais × receita da EFD-Contribuições | — |
+| `ATT-PIS-001` | Tributário | PIS dos documentos × apuração do registro M200 | — |
+| `ATT-COF-001` | Tributário | COFINS dos documentos × apuração do registro M600 | — |
 
 `ATT-PIS-001` e `ATT-COF-001` reportam `NAO_APLICAVEL` para empresas do Simples
 Nacional, porque a Contribuição para o PIS/Pasep e a COFINS são recolhidas no
 documento único de arrecadação (Lei Complementar 123/2006, art. 13).
+
+### Escopo do cruzamento XML × EFD ICMS/IPI
+
+As regras fiscais leem uma reconciliação única
+(`src/lib/audit-engine/reconciliation.ts`), calculada uma vez por auditoria e
+compartilhada por todas elas. Duas regras nunca pareiam documentos por conta
+própria, de modo que o relatório não pode ficar internamente contraditório.
+
+A reconciliação classifica cada documento pelo **escopo**, sob a ótica da
+empresa auditada, e é isso que decide quais comparações são válidas:
+
+| Escopo | Como é determinado | Consequência |
+| --- | --- | --- |
+| Saída própria | CNPJ da empresa é o emitente | Todas as comparações se aplicam |
+| Entrada de terceiro | CNPJ da empresa é o destinatário | `ATT-FIS-004`, `ATT-FIS-005` e `ATT-FIS-006` reportam `NAO_APLICAVEL`, com o motivo |
+| Indefinido | Nenhum dos dois CNPJ concilia com o cadastro | A ocorrência sai como `INDICIO`, nunca como fato |
+
+O motivo da exclusão é fiscal, não técnico:
+
+- **Base e valor de ICMS na entrada.** O destinatário escritura em `VL_BC_ICMS`
+  e `VL_ICMS` o crédito a que tem direito, que pode ser legitimamente inferior
+  ao destaque do emitente — inclusive zero, em operação sem direito a crédito.
+  Confrontar destaque com escriturado acusaria divergência em praticamente toda
+  entrada, sem que houvesse erro.
+- **CFOP na entrada.** O CFOP é declarado sob a ótica de cada declarante: o
+  emitente classifica a operação como saída (5xxx/6xxx/7xxx) e o destinatário a
+  escritura como entrada (1xxx/2xxx/3xxx). Os códigos nunca coincidem. A
+  correlação entre os dois depende da natureza da entrada e não é parametrizada
+  pelo sistema.
+
+O que fica de fora nunca fica em silêncio: cada conjunto excluído vira uma
+ocorrência agregada com a contagem, uma amostra de chaves e a razão da exclusão.
+Não verificar não é conformidade.
+
+### Ressalvas
+
+Documento complementar, de ajuste, de devolução ou emitido sob regime especial
+tem motivo legítimo para não coincidir campo a campo. Nesses casos a comparação
+**continua sendo executada e a diferença continua visível**, mas a ocorrência sai
+como `ALERTA` / `INDICIO` em vez de `DIVERGENCIA` / `FATO`, e a evidência traz o
+campo e o valor que justificam a ressalva (`finNFe` no XML, `COD_SIT` no C100).
+A escrituração extemporânea (`COD_SIT` 01 e 03) é registrada como ressalva
+informativa e não rebaixa a conclusão: ela desloca a competência, não o valor do
+documento.
+
+### NFC-e e escrituração consolidada
+
+Se o XML traz NFC-e (modelo 65) e o arquivo da EFD não escritura **nenhum**
+documento de modelo 65, `ATT-FIS-001` reporta `NAO_VERIFICADO` para esse
+subconjunto em vez de acusar cada NFC-e como não escriturada. O parser lê a
+escrituração documento a documento (C100) e não os registros de consolidação do
+bloco C; afirmar a ausência seria afirmar um fato que o arquivo não sustenta.
 
 ### Tolerância
 
 Cada regra tem `absoluteTolerance` (centavos) e `percentageTolerance` (pontos
 percentuais), ajustáveis por organização na tela *Regras de Auditoria*. O padrão
 é R$ 0,05 absolutos, tratado como arredondamento. A tolerância aplicada aparece
-nas evidências da ocorrência.
+nas evidências da ocorrência. Onde a regra não compara valores — presença de
+chave, código de CFOP — a evidência diz explicitamente *não aplicável*, em vez
+de omitir a linha.
+
+### Rastreabilidade da ocorrência
+
+Toda ocorrência responde, sem sair da tela, de onde veio cada número:
+
+| Elemento | Onde fica |
+| --- | --- |
+| Arquivo | `evidence.fileName` (nome da entrada do ZIP, quando houver) |
+| Chave | `documentRef` e evidência *Chave de acesso* |
+| Registro | `evidence.recordCode` (`C100`, `infNFe`) |
+| Linha | `evidence.lineNumber`, base 1 do arquivo original |
+| Campo | `evidence.fieldName`, com o nome oficial do leiaute (`VL_DOC`, `vNF`) |
+| Valor | `evidence.value` |
+| Regra | `ruleCode` |
+| Versão | `ruleVersion` (da regra) e `evidence.parserVersion` (do leitor do arquivo) |
+| Tolerância | Evidência *Tolerância aplicada*, com o valor efetivamente usado |
+
+A versão da regra é independente da versão da aplicação e muda sempre que o
+critério de comparação, o universo avaliado ou a classificação do resultado
+mudam. É o que permite dizer, meses depois, qual critério produziu uma
+ocorrência arquivada.
 
 ### Score
 
@@ -652,8 +740,13 @@ variáveis de ambiente do provedor.
 
 **Banco**
 
-- [ ] Aplicar `0001_schema.sql`, `0002_rls.sql`, `0003_seed_organization.sql` e
-      `0004_fase2_validacao.sql`, nessa ordem (`supabase db push`).
+- [ ] Aplicar `0001_schema.sql`, `0002_rls.sql`, `0003_seed_organization.sql`,
+      `0004_fase2_validacao.sql` e `0005_fase3_xml_efd.sql`, nessa ordem
+      (`supabase db push`). A migração `0005` é obrigatória: além das colunas da
+      fase 3, ela cria `record_code` e `line_number` em
+      `audit_finding_evidence`, que a aplicação gravava desde a fase 2 sem que
+      nenhuma migração as tivesse criado — sem ela, a gravação das evidências
+      falha em modo `supabase`.
 - [ ] Conferir que **todas** as tabelas de dados têm RLS habilitado e política
       comparando `organization_id` com `public.current_organization_id()`.
 - [ ] Conferir as chaves únicas: `audit_files (audit_id, sha256)`,
@@ -723,6 +816,23 @@ variáveis de ambiente do provedor.
   regra `ATT-FIS-006`, porém, compara o **CFOP predominante** (o de maior valor),
   não item a item. Onde a comparação é agregada, a tela indica isso
   explicitamente.
+- **Entradas não têm conferência de ICMS nem de CFOP.** Pelas razões descritas
+  em *Escopo do cruzamento*, `ATT-FIS-004`, `ATT-FIS-005` e `ATT-FIS-006` não
+  concluem sobre documentos de entrada. A conferência do crédito apropriado
+  depende do direito ao crédito de cada operação e não está parametrizada.
+- **Registros de consolidação do bloco C não são lidos.** A EFD é interpretada
+  documento a documento (C100/C170/C190/C197). Operações escrituradas por
+  consolidação ficam fora dos cruzamentos por chave, e é por isso que NFC-e sem
+  modelo 65 na EFD sai como `NAO_VERIFICADO`, não como divergência.
+- **Divergência de situação entre XML e EFD ainda não é regra.** Um documento
+  cancelado no XML e escriturado como regular no C100 é excluído dos dois lados
+  do cruzamento (nenhum documento sem efeito fiscal participa) e hoje não gera
+  ocorrência própria. A reconciliação já separa esses documentos
+  (`xmlIneffective`, `efdIneffective`); falta a regra que os confronta.
+- **Duplicidade só é apurada no processamento.** A reconciliação acusa a mesma
+  chave escriturada em mais de um C100 a partir do que a normalização colapsou.
+  Um dataset remontado do banco já contém o resultado da deduplicação, de modo
+  que a reavaliação de duplicidade exige reprocessar o arquivo.
 - **Confirmação manual restrita ao PGDAS-D.** Os campos confirmáveis são
   competência, receita bruta do período, RBT12 e total devido. XML e SPED não
   têm correção manual: são arquivos estruturados cuja divergência de leitura

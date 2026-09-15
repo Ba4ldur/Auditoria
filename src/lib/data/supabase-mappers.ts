@@ -179,6 +179,10 @@ export function toInvoice(row: Row): Invoice {
     issueDate: nullableStr(row, 'issue_date'),
     direction: str(row, 'direction') as Invoice['direction'],
     status: str(row, 'status') as Invoice['status'],
+    purpose: (nullableStr(row, 'purpose') as Invoice['purpose']) ?? 'INDEFINIDA',
+    extemporaneous: row.extemporaneous === true,
+    purposeCode: nullableStr(row, 'purpose_code'),
+    purposeField: nullableStr(row, 'purpose_field'),
     totalValue: cents(num(row, 'total_value')),
     emitterTaxId: nullableStr(row, 'emitter_tax_id'),
     emitterName: nullableStr(row, 'emitter_name'),
@@ -260,7 +264,9 @@ export function toFinding(row: Row): AuditFinding {
     source: (nullableStr(item, 'source') as AuditFinding['evidence'][number]['source']) ?? null,
     fileName: nullableStr(item, 'file_name'),
     recordCode: nullableStr(item, 'record_code'),
+    fieldName: nullableStr(item, 'field_name'),
     lineNumber: nullableNum(item, 'line_number'),
+    parserVersion: nullableStr(item, 'parser_version'),
     reference: nullableStr(item, 'reference'),
   }));
 
@@ -270,6 +276,7 @@ export function toFinding(row: Row): AuditFinding {
     auditId: str(row, 'audit_id'),
     ruleCode: str(row, 'rule_code'),
     ruleName: str(row, 'rule_name'),
+    ruleVersion: nullableStr(row, 'rule_version') ?? '',
     module: str(row, 'module') as AuditFinding['module'],
     severity: str(row, 'severity') as AuditFinding['severity'],
     status: str(row, 'status') as AuditFinding['status'],

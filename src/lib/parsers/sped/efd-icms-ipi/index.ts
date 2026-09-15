@@ -15,6 +15,7 @@ import { ok, type Result } from '@/lib/core/result';
 import {
   EMPTY_IDENTITY,
   recordOrigin,
+  type DocumentPurpose,
   type DocumentStatus,
   type FiscalDocumentKind,
   type Invoice,
@@ -29,8 +30,11 @@ import { decodeSped, looksLikeSped } from '../reader';
 import {
   CANCELLED_COD_SIT,
   COD_SIT_LABELS,
+  COMPLEMENTARY_COD_SIT,
   DENIED_COD_SIT,
   EFD_ICMS_LAYOUT,
+  LATE_COD_SIT,
+  SPECIAL_REGIME_COD_SIT,
   VOID_COD_SIT,
   createEfdIcmsState,
   type EfdIcmsDocument,
@@ -74,6 +78,20 @@ function directionOf(indOper: string | null): OperationDirection {
   if (indOper === '0') return 'ENTRADA';
   if (indOper === '1') return 'SAIDA';
   return 'INDEFINIDA';
+}
+
+/**
+ * Finalidade a partir do `COD_SIT` do registro C100 (Guia Prático da EFD
+ * ICMS/IPI). Os códigos 06 e 07 identificam documento complementar, que
+ * escritura apenas o valor complementado, e o 08 identifica documento emitido
+ * sob regime especial. Nenhum dos dois é comparável, campo a campo, com o total
+ * de um documento normal.
+ */
+function purposeOf(codSit: string | null): DocumentPurpose {
+  if (!codSit) return 'INDEFINIDA';
+  if (COMPLEMENTARY_COD_SIT.has(codSit)) return 'COMPLEMENTAR';
+  if (SPECIAL_REGIME_COD_SIT.has(codSit)) return 'REGIME_ESPECIAL';
+  return 'NORMAL';
 }
 
 function statusOf(codSit: string | null): DocumentStatus {
@@ -141,6 +159,10 @@ function toInvoice(
     issueDate: document.dtDoc,
     direction: directionOf(document.indOper),
     status: statusOf(document.codSit),
+    purpose: purposeOf(document.codSit),
+    extemporaneous: document.codSit !== null && LATE_COD_SIT.has(document.codSit),
+    purposeCode: document.codSit,
+    purposeField: document.codSit ? 'COD_SIT' : null,
     totalValue: document.vlDoc,
     emitterTaxId: ownIssue ? companyTaxId : participantTaxId,
     emitterName: ownIssue ? state.legalName : (participant?.nome ?? null),

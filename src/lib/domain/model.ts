@@ -83,6 +83,33 @@ export type DocumentStatus =
 
 export type FiscalDocumentKind = 'NFE' | 'NFCE' | 'NFSE' | 'CTE' | 'MDFE' | 'OUTRO';
 
+/**
+ * Finalidade do documento, normalizada a partir de campos diferentes em cada
+ * obrigação (`ide/finNFe` no XML da NF-e, `COD_SIT` no registro C100 da EFD).
+ *
+ * A distinção não é decorativa: um documento complementar registra apenas o
+ * valor complementado, e uma devolução inverte o sentido da operação. Comparar
+ * qualquer um deles com o total de um documento normal produz diferença
+ * aritmética sem significado fiscal — exatamente o que o sistema não pode
+ * apresentar como divergência.
+ */
+export type DocumentPurpose =
+  | 'NORMAL'
+  | 'COMPLEMENTAR'
+  | 'AJUSTE'
+  | 'DEVOLUCAO'
+  | 'REGIME_ESPECIAL'
+  | 'INDEFINIDA';
+
+export const DOCUMENT_PURPOSE_LABELS: Readonly<Record<DocumentPurpose, string>> = {
+  NORMAL: 'Documento normal',
+  COMPLEMENTAR: 'Documento complementar',
+  AJUSTE: 'Documento de ajuste',
+  DEVOLUCAO: 'Documento de devolução',
+  REGIME_ESPECIAL: 'Documento emitido sob regime especial ou norma específica',
+  INDEFINIDA: 'Finalidade não declarada pela fonte',
+};
+
 /** Minimal identity shared by every fiscal document, whatever its origin. */
 export interface FiscalDocument {
   readonly source: DataSourceKind;
@@ -95,6 +122,17 @@ export interface FiscalDocument {
   readonly issueDate: string | null;
   readonly direction: OperationDirection;
   readonly status: DocumentStatus;
+  /** Finalidade normalizada do documento. */
+  readonly purpose: DocumentPurpose;
+  /**
+   * Escrituração declarada como extemporânea pela fonte (`COD_SIT` 01 ou 03).
+   * Falso quando a fonte não tem como declarar isso, como o XML.
+   */
+  readonly extemporaneous: boolean;
+  /** Valor bruto do campo que determinou `purpose`, preservado para evidência. */
+  readonly purposeCode: string | null;
+  /** Nome do campo de onde `purposeCode` foi lido (`COD_SIT`, `finNFe`). */
+  readonly purposeField: string | null;
   readonly totalValue: Cents;
 }
 

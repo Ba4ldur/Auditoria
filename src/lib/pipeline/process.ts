@@ -290,8 +290,18 @@ export async function loadAuditDataset(auditId: string): Promise<AuditDataset | 
       fileId: file.id,
       fileName: file.originalName,
       source: file.detectedSource,
+      parserVersion: file.parserVersion,
     })),
     availableSources,
+    parserVersions: new Map(
+      files
+        .filter((file) => file.parserVersion !== null)
+        .map((file) => [file.id, file.parserVersion as string]),
+    ),
+    // O dataset reconstruído a partir do banco não passa pela deduplicação: os
+    // documentos gravados já são o resultado dela. Reprocessar o arquivo é o
+    // caminho para reavaliar duplicidade.
+    duplicateOrigins: new Map(),
   };
 }
 

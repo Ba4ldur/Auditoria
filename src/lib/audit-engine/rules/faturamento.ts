@@ -184,6 +184,7 @@ export function revenueFromPgdasd(dataset: AuditDataset): RevenueOutcome {
 interface RevenueRuleSpec {
   readonly id: string;
   readonly codigo: string;
+  readonly versao: string;
   readonly nome: string;
   readonly descricao: string;
   readonly gravidade: AuditRule['gravidade'];
@@ -208,6 +209,7 @@ function revenueRule(spec: RevenueRuleSpec): AuditRule {
   return {
     id: spec.id,
     codigo: spec.codigo,
+    versao: spec.versao,
     nome: spec.nome,
     descricao: spec.descricao,
     modulo: 'FATURAMENTO',
@@ -312,6 +314,7 @@ function revenueRule(spec: RevenueRuleSpec): AuditRule {
 export const attFat001 = revenueRule({
   id: 'att-fat-001',
   codigo: 'ATT-FAT-001',
+  versao: '1.0.0',
   nome: 'Faturamento apurado pelos documentos fiscais diferente do PGDAS-D',
   descricao:
     'Compara a receita composta a partir dos documentos fiscais de saída (XML) com a receita bruta do ' +
@@ -332,6 +335,7 @@ export const attFat001 = revenueRule({
 export const attFat002 = revenueRule({
   id: 'att-fat-002',
   codigo: 'ATT-FAT-002',
+  versao: '1.0.0',
   nome: 'Faturamento da EFD ICMS/IPI diferente do PGDAS-D',
   descricao:
     'Compara a receita composta a partir dos documentos de saída escriturados na EFD ICMS/IPI com a ' +
@@ -350,6 +354,7 @@ export const attFat002 = revenueRule({
 export const attFat003 = revenueRule({
   id: 'att-fat-003',
   codigo: 'ATT-FAT-003',
+  versao: '1.0.0',
   nome: 'Faturamento da EFD-Contribuições diferente do PGDAS-D',
   descricao: 'Compara a receita apurada na EFD-Contribuições com a receita bruta informada no PGDAS-D.',
   gravidade: 'ALTA',
@@ -368,6 +373,7 @@ export const attFat003 = revenueRule({
 export const attFat004 = revenueRule({
   id: 'att-fat-004',
   codigo: 'ATT-FAT-004',
+  versao: '1.0.0',
   nome: 'Faturamento pelos documentos fiscais diferente da receita da EFD-Contribuições',
   descricao:
     'Compara a receita composta a partir dos documentos fiscais de saída (XML) com a receita apurada na ' +

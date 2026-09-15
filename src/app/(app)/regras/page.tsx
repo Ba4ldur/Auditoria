@@ -45,6 +45,7 @@ export default async function RulesPage() {
                 title={
                   <span className="flex flex-wrap items-center gap-2">
                     <span className="font-mono text-xs text-navy-700">{rule.codigo}</span>
+                    <span className="font-mono text-[0.625rem] text-ink-subtle">v{rule.versao}</span>
                     <span>{rule.nome}</span>
                   </span>
                 }

@@ -5,7 +5,7 @@ import { formatIsoDate } from '@/lib/core/dates';
 import type { Invoice, RecordOrigin } from '@/lib/domain/model';
 import type { FindingEvidence } from '@/lib/domain/entities';
 import type { DataSourceKind } from '@/lib/domain/sources';
-import type { AuditDataset } from '@/lib/normalization/dataset';
+import { parserVersionOf, type AuditDataset } from '@/lib/normalization/dataset';
 
 export type EvidenceDraft = Omit<FindingEvidence, 'id'>;
 
@@ -15,6 +15,13 @@ export interface EvidenceOptions {
   readonly from?: RecordOrigin | null;
   readonly fileName?: string | null;
   readonly reference?: string | null;
+  /**
+   * Nome oficial do campo lido (`VL_DOC`, `CHV_NFE`, `vNF`). Fica separado da
+   * frase de origem para que a conferência contra o leiaute seja direta.
+   */
+  readonly field?: string | null;
+  /** Versão do parser; normalmente resolvida pelo `tracer` a partir do arquivo. */
+  readonly parserVersion?: string | null;
 }
 
 export function evidence(
@@ -30,7 +37,9 @@ export function evidence(
     source: options.source ?? null,
     fileName: options.fileName ?? options.from?.entryName ?? options.from?.fileName ?? null,
     recordCode: options.from?.recordCode ?? null,
+    fieldName: options.field ?? null,
     lineNumber: options.from?.lineNumber ?? null,
+    parserVersion: options.parserVersion ?? null,
     reference: options.reference ?? null,
   };
 }
@@ -42,6 +51,30 @@ export function moneyEvidence(
   options: EvidenceOptions = {},
 ): EvidenceDraft {
   return evidence(label, origin, formatBRL(amount), options);
+}
+
+/**
+ * Fábrica de evidências ligada ao dataset da auditoria.
+ *
+ * Existe por um motivo só: a versão do parser não está no registro normalizado,
+ * está no arquivo de onde ele veio. Passar o dataset uma vez evita que cada
+ * regra tenha de repetir essa busca — e evita que alguém a esqueça, deixando a
+ * evidência sem dizer qual leitura de campo produziu o valor.
+ */
+export interface Tracer {
+  evidence(label: string, origin: string, value: string | null, options?: EvidenceOptions): EvidenceDraft;
+  money(label: string, origin: string, amount: Cents, options?: EvidenceOptions): EvidenceDraft;
+}
+
+export function tracer(dataset: AuditDataset): Tracer {
+  const resolve = (options: EvidenceOptions): EvidenceOptions => ({
+    ...options,
+    parserVersion: options.parserVersion ?? parserVersionOf(dataset, options.from?.fileId ?? null),
+  });
+  return {
+    evidence: (label, origin, value, options = {}) => evidence(label, origin, value, resolve(options)),
+    money: (label, origin, amount, options = {}) => moneyEvidence(label, origin, amount, resolve(options)),
+  };
 }
 
 /** Documents excluded from cross-checks because they carry no fiscal effect. */

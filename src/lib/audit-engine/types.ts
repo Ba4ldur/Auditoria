@@ -80,6 +80,14 @@ export interface RuleContext {
 export interface AuditRule {
   readonly id: string;
   readonly codigo: string;
+  /**
+   * Versão da regra, independente da versão da aplicação.
+   *
+   * Muda sempre que o critério de comparação, o universo de documentos
+   * avaliados ou a classificação do resultado mudam — é o que permite dizer,
+   * meses depois, qual critério produziu uma ocorrência arquivada.
+   */
+  readonly versao: string;
   readonly nome: string;
   readonly descricao: string;
   readonly modulo: AuditModule;

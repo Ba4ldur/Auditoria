@@ -256,8 +256,20 @@ export interface FindingEvidence {
   readonly fileName: string | null;
   /** Código do registro SPED ou elemento do XML que produziu o valor. */
   readonly recordCode: string | null;
+  /**
+   * Nome oficial do campo lido, exatamente como consta no leiaute da obrigação
+   * (`VL_DOC`, `CHV_NFE`, `vNF`). Guardado separado de `origin`, que é a frase
+   * explicativa: conferir um resultado contra o Guia Prático exige o nome do
+   * campo isolado, não embutido em texto corrido.
+   */
+  readonly fieldName: string | null;
   /** Linha do arquivo original, quando a origem é orientada a linha. */
   readonly lineNumber: number | null;
+  /**
+   * Versão do parser que leu o arquivo de origem. Sem ela não é possível saber
+   * se um resultado antigo foi produzido pela leitura atual do campo.
+   */
+  readonly parserVersion: string | null;
   readonly reference: string | null;
 }
 
@@ -267,6 +279,8 @@ export interface AuditFinding {
   readonly auditId: string;
   readonly ruleCode: string;
   readonly ruleName: string;
+  /** Versão da regra que produziu a ocorrência (rastreabilidade, fase 3). */
+  readonly ruleVersion: string;
   readonly module: AuditModule;
   readonly severity: Severity;
   readonly status: FindingStatus;

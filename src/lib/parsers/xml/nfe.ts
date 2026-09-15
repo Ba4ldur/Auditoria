@@ -20,6 +20,7 @@ import { failWith, ok, type Result } from '@/lib/core/result';
 import {
   EMPTY_IDENTITY,
   recordOrigin,
+  type DocumentPurpose,
   type DocumentStatus,
   type Invoice,
   type InvoiceItem,
@@ -115,6 +116,7 @@ export function parseNfeXml(
   const cfops = collectCfops(items);
   const status = readStatus(root);
   const direction = readDirection(text(ide, 'tpNF'));
+  const finNFe = text(ide, 'finNFe');
 
   const documentKind = modelo === '65' ? 'NFCE' : 'NFE';
   const source: DataSourceKind = modelo === '65' ? 'XML_NFCE' : 'XML_NFE';
@@ -132,6 +134,11 @@ export function parseNfeXml(
     issueDate,
     direction,
     status,
+    purpose: readPurpose(finNFe),
+    // O XML não declara quando o documento foi escriturado; só a EFD o faz.
+    extemporaneous: false,
+    purposeCode: finNFe,
+    purposeField: finNFe ? 'finNFe' : null,
     totalValue: totals.total,
     emitterTaxId,
     emitterName: text(emit, 'xNome'),
@@ -154,6 +161,26 @@ export function parseNfeXml(
   };
 
   return ok({ invoice, messages });
+}
+
+/**
+ * Finalidade declarada em `ide/finNFe` (Manual de Orientação do Contribuinte da
+ * NF-e): 1 normal, 2 complementar, 3 ajuste, 4 devolução. Ausente nos leiautes
+ * antigos, caso em que a finalidade fica indefinida em vez de presumida normal.
+ */
+function readPurpose(finNFe: string | null): DocumentPurpose {
+  switch (finNFe) {
+    case '1':
+      return 'NORMAL';
+    case '2':
+      return 'COMPLEMENTAR';
+    case '3':
+      return 'AJUSTE';
+    case '4':
+      return 'DEVOLUCAO';
+    default:
+      return 'INDEFINIDA';
+  }
 }
 
 function readDirection(tpNF: string | null): OperationDirection {

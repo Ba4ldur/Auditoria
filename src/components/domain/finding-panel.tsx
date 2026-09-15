@@ -41,7 +41,14 @@ export function FindingPanel({
         <div className="min-w-0">
           <p className="font-mono text-xs tracking-wide text-gold-400">{finding.ruleCode}</p>
           <h2 className="mt-1 text-base leading-snug font-semibold">{finding.title}</h2>
-          <p className="mt-1 text-xs text-navy-200">{finding.ruleName}</p>
+          <p className="mt-1 text-xs text-navy-200">
+            {finding.ruleName}
+            {finding.ruleVersion ? (
+              <span className="ml-1.5 font-mono text-[0.625rem] text-navy-300">
+                v{finding.ruleVersion}
+              </span>
+            ) : null}
+          </p>
         </div>
         <Link
           href={closeHref}
@@ -116,9 +123,19 @@ export function FindingPanel({
                         registro {item.recordCode}
                       </span>
                     ) : null}
+                    {item.fieldName ? (
+                      <span className="font-mono text-[0.625rem] text-ink-subtle">
+                        campo {item.fieldName}
+                      </span>
+                    ) : null}
                     {item.lineNumber !== null ? (
                       <span className="text-[0.625rem] font-medium text-navy-600">
                         linha {item.lineNumber.toLocaleString('pt-BR')}
+                      </span>
+                    ) : null}
+                    {item.parserVersion ? (
+                      <span className="text-[0.625rem] text-ink-subtle">
+                        leitor v{item.parserVersion}
                       </span>
                     ) : null}
                   </div>

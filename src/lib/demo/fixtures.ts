@@ -58,6 +58,8 @@ export interface NfeSpec {
   readonly destinatario: { cnpj: string; nome: string; uf: string };
   readonly items: readonly InvoiceItemSpec[];
   readonly cancelada?: boolean;
+  /** Finalidade da NF-e (`ide/finNFe`): 1 normal, 2 complementar, 3 ajuste, 4 devolução. */
+  readonly finNFe?: '1' | '2' | '3' | '4';
 }
 
 function money(value: number): string {
@@ -177,6 +179,7 @@ export function buildNfeXml(spec: NfeSpec): string {
         <nNF>${spec.numero}</nNF>
         <dhEmi>${spec.emissao}T09:00:00-03:00</dhEmi>
         <tpNF>${spec.tpNF}</tpNF>
+        <finNFe>${spec.finNFe ?? '1'}</finNFe>
         <idDest>${spec.emitente.uf === spec.destinatario.uf ? '1' : '2'}</idDest>
         <tpEmis>1</tpEmis>
       </ide>
@@ -239,6 +242,10 @@ export interface EfdDocumentSpec {
     readonly icms?: number;
     readonly cfop?: string;
     readonly codSit?: string;
+    /** Escritura o mesmo documento duas vezes, para exercitar a duplicidade. */
+    readonly duplicado?: boolean;
+    /** Omite o CFOP dos registros C170/C190, deixando o documento sem CFOP. */
+    readonly semCfop?: boolean;
   };
 }
 
@@ -285,6 +292,8 @@ export function buildEfdIcmsTxt(spec: EfdIcmsSpec): string {
     const baseIcms = override?.baseIcms ?? totals.baseIcms;
     const icms = override?.icms ?? totals.icms;
 
+    const documentStart = lines.length;
+
     add(
       'C100',
       outgoing ? '1' : '0', // IND_OPER
@@ -326,7 +335,7 @@ export function buildEfdIcmsTxt(spec: EfdIcmsSpec): string {
         '0,00', // VL_DESC
         '0', // IND_MOV
         item.cst ?? '00', // CST_ICMS
-        override?.cfop ?? item.cfop, // CFOP
+        override?.semCfop ? '' : (override?.cfop ?? item.cfop), // CFOP
         '', // COD_NAT
         spedMoney(value), // VL_BC_ICMS
         spedMoney(item.aliquotaIcms), // ALIQ_ICMS
@@ -343,13 +352,16 @@ export function buildEfdIcmsTxt(spec: EfdIcmsSpec): string {
     add(
       'C190',
       nfe.items[0]?.cst ?? '00', // CST_ICMS
-      override?.cfop ?? nfe.items[0]?.cfop ?? '5102', // CFOP
+      override?.semCfop ? '' : (override?.cfop ?? nfe.items[0]?.cfop ?? '5102'), // CFOP
       spedMoney(nfe.items[0]?.aliquotaIcms ?? 0), // ALIQ_ICMS
       spedMoney(valorDocumento), // VL_OPR
       spedMoney(baseIcms), // VL_BC_ICMS
       spedMoney(icms), // VL_ICMS
       '0,00', '0,00', '0,00', '0,00', '',
     );
+
+    // Escrituração repetida da mesma chave, quando a fixture pede duplicidade.
+    if (override?.duplicado) lines.push(...lines.slice(documentStart));
   }
 
   add('C990', String(lines.length - blockCStart + 1));

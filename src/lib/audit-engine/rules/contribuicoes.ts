@@ -28,6 +28,7 @@ import { evidence, isEffective, moneyEvidence } from './helpers';
 interface ContributionRuleSpec {
   readonly id: string;
   readonly codigo: string;
+  readonly versao: string;
   readonly nome: string;
   readonly tax: Extract<TaxKind, 'PIS' | 'COFINS'>;
   readonly register: string;
@@ -38,6 +39,7 @@ function contributionRule(spec: ContributionRuleSpec): AuditRule {
   return {
     id: spec.id,
     codigo: spec.codigo,
+    versao: spec.versao,
     nome: spec.nome,
     descricao:
       `Compara o somatório de ${spec.tax} dos documentos de saída escriturados na EFD-Contribuições com a ` +
@@ -168,6 +170,7 @@ function contributionRule(spec: ContributionRuleSpec): AuditRule {
 export const attPis001 = contributionRule({
   id: 'att-pis-001',
   codigo: 'ATT-PIS-001',
+  versao: '1.0.0',
   nome: 'PIS dos documentos divergente da apuração da EFD-Contribuições',
   tax: 'PIS',
   register: 'M200',
@@ -177,6 +180,7 @@ export const attPis001 = contributionRule({
 export const attCof001 = contributionRule({
   id: 'att-cof-001',
   codigo: 'ATT-COF-001',
+  versao: '1.0.0',
   nome: 'COFINS dos documentos divergente da apuração da EFD-Contribuições',
   tax: 'COFINS',
   register: 'M600',

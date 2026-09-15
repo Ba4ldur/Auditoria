@@ -110,6 +110,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
       const rows: CsvCell[][] = findings.map((finding) => [
         finding.ruleCode,
         finding.ruleName,
+        finding.ruleVersion,
         finding.title,
         FINDING_STATUS_LABELS[finding.status],
         SEVERITY_LABELS[finding.severity],
@@ -129,6 +130,7 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
           [
             'Codigo',
             'Regra',
+            'Versao da regra',
             'Ocorrencia',
             'Resultado',
             'Gravidade',
@@ -158,7 +160,9 @@ function describeEvidence(item: {
   value: string | null;
   fileName: string | null;
   recordCode: string | null;
+  fieldName: string | null;
   lineNumber: number | null;
+  parserVersion: string | null;
 }): string {
   const origin = describeOrigin({
     fileId: null,
@@ -167,5 +171,10 @@ function describeEvidence(item: {
     lineNumber: item.lineNumber,
     entryName: null,
   });
-  return `${item.value ?? ''} (${origin})`;
+  const detail = [
+    origin,
+    ...(item.fieldName ? [`campo ${item.fieldName}`] : []),
+    ...(item.parserVersion ? [`leitor v${item.parserVersion}`] : []),
+  ].join(' · ');
+  return `${item.value ?? ''} (${detail})`;
 }

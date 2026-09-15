@@ -15,6 +15,7 @@ import type {
   Invoice,
   OperationDirection,
   ParticipantRecord,
+  RecordOrigin,
   RevenueRecord,
   TaxRecord,
 } from '@/lib/domain/model';
@@ -26,6 +27,8 @@ export interface AuditFileSummary {
   readonly fileId: string;
   readonly fileName: string;
   readonly source: DataSourceKind | null;
+  /** Versão do parser que interpretou o arquivo (rastreabilidade, fase 3). */
+  readonly parserVersion: string | null;
 }
 
 export interface AuditDataset {
@@ -39,6 +42,25 @@ export interface AuditDataset {
   readonly files: readonly AuditFileSummary[];
   /** Sources actually present in the dataset; drives rule applicability. */
   readonly availableSources: ReadonlySet<DataSourceKind>;
+  /**
+   * `fileId` → versão do parser que produziu os registros daquele arquivo.
+   *
+   * As regras usam este mapa para carimbar a evidência: o registro normalizado
+   * guarda de qual arquivo veio, e é aqui que se descobre com qual leitura de
+   * campo aquele arquivo foi interpretado.
+   */
+  readonly parserVersions: ReadonlyMap<string, string>;
+  /**
+   * Origens colapsadas pela deduplicação, por `source|chave`, incluindo a
+   * ocorrência preservada.
+   *
+   * A deduplicação existe porque o mesmo XML costuma chegar duas vezes (solto e
+   * dentro do ZIP), e contá-lo duas vezes inflaria a receita. Na escrituração,
+   * porém, a mesma chave em dois registros C100 é uma duplicidade real, que
+   * altera a apuração do período. Colapsar sem registrar faria o sistema apagar
+   * exatamente o fato que precisa acusar.
+   */
+  readonly duplicateOrigins: ReadonlyMap<string, readonly RecordOrigin[]>;
 }
 
 /**
@@ -70,22 +92,34 @@ export function buildDataset(input: DatasetInput): AuditDataset {
   const participants: ParticipantRecord[] = [];
   const files: AuditFileSummary[] = [];
   const availableSources = new Set<DataSourceKind>();
+  const parserVersions = new Map<string, string>();
+  const duplicateOrigins = new Map<string, RecordOrigin[]>();
 
   for (const { payload, fileId, fileName } of input.payloads) {
-    files.push({ fileId, fileName, source: payload.source });
+    files.push({ fileId, fileName, source: payload.source, parserVersion: payload.parserVersion ?? null });
+    if (payload.parserVersion) parserVersions.set(fileId, payload.parserVersion);
 
     for (const invoice of payload.invoices) {
       availableSources.add(invoice.source);
       const dedupeKey = `${invoice.source}|${invoice.accessKey ?? invoice.id}`;
-      if (invoicesBySourceKey.has(dedupeKey)) continue;
+      const origin: RecordOrigin = {
+        ...invoice.origin,
+        fileId: invoice.origin.fileId ?? fileId,
+        fileName: invoice.origin.fileName ?? fileName,
+      };
+
+      const kept = invoicesBySourceKey.get(dedupeKey);
+      if (kept) {
+        const origins = duplicateOrigins.get(dedupeKey) ?? [kept.origin];
+        origins.push(origin);
+        duplicateOrigins.set(dedupeKey, origins);
+        continue;
+      }
+
       invoicesBySourceKey.set(dedupeKey, {
         ...invoice,
         direction: resolveDirection(invoice, input.company.cnpj),
-        origin: {
-          ...invoice.origin,
-          fileId: invoice.origin.fileId ?? fileId,
-          fileName: invoice.origin.fileName ?? fileName,
-        },
+        origin,
       });
     }
 
@@ -114,7 +148,24 @@ export function buildDataset(input: DatasetInput): AuditDataset {
     participants,
     files,
     availableSources,
+    parserVersions,
+    duplicateOrigins,
   };
+}
+
+/** Ocorrências colapsadas de um documento, ou lista vazia se não houve. */
+export function duplicateOriginsOf(
+  dataset: AuditDataset,
+  source: DataSourceKind,
+  accessKey: string,
+): readonly RecordOrigin[] {
+  return dataset.duplicateOrigins.get(`${source}|${accessKey}`) ?? [];
+}
+
+/** Versão do parser que leu o arquivo de onde o registro veio, se conhecida. */
+export function parserVersionOf(dataset: AuditDataset, fileId: string | null): string | null {
+  if (!fileId) return null;
+  return dataset.parserVersions.get(fileId) ?? null;
 }
 
 export function invoicesFrom(

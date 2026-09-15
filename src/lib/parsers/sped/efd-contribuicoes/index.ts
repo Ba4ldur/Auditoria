@@ -161,6 +161,13 @@ function toInvoice(
     issueDate: document.dtDoc,
     direction: directionOf(document.indOper),
     status: statusOf(document.codSit),
+    // A EFD-Contribuições usa a mesma tabela de COD_SIT do C100 apenas nos
+    // registros do bloco C; para os demais a finalidade não é declarada e fica
+    // indefinida em vez de presumida normal.
+    purpose: document.codSit === '06' || document.codSit === '07' ? 'COMPLEMENTAR' : document.codSit ? 'NORMAL' : 'INDEFINIDA',
+    extemporaneous: document.codSit === '01' || document.codSit === '03',
+    purposeCode: document.codSit,
+    purposeField: document.codSit ? 'COD_SIT' : null,
     totalValue: document.vlDoc,
     emitterTaxId: ownIssue ? companyTaxId : participantTaxId,
     emitterName: ownIssue ? state.legalName : (participant?.nome ?? null),

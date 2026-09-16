@@ -16,7 +16,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "verify": "npm run lint && npm run typecheck && npm run test && npm run build",
-    "db:check": "supabase/testing/check-migrations.sh"
+    "db:check": "supabase/testing/check-migrations.sh",
+    "bench": "vitest run --config vitest.bench.config.mts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

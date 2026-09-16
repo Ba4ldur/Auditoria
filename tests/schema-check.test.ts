@@ -50,6 +50,30 @@ function fakeClient(colunasAusentes: Readonly<Record<string, readonly string[]>>
   } as unknown as SupabaseClient;
 }
 
+/**
+ * Cliente que simula a tabela inteira ausente (0006 não aplicada), com o erro
+ * exatamente como o PostgREST relata — diferente do erro de coluna ausente.
+ */
+function fakeClientMissingTable(table: string, code = 'PGRST205'): SupabaseClient {
+  return {
+    from(requested: string) {
+      return {
+        select() {
+          return {
+            limit() {
+              const error: FakeError | null =
+                requested === table
+                  ? { code, message: `Could not find the table 'public.${table}' in the schema cache` }
+                  : null;
+              return Promise.resolve({ data: error ? null : [], error });
+            },
+          };
+        },
+      };
+    },
+  } as unknown as SupabaseClient;
+}
+
 describe('conferência do esquema', () => {
   it('banco em dia não produz aviso', async () => {
     const check = await checkSchema(fakeClient({}));
@@ -94,13 +118,35 @@ describe('conferência do esquema', () => {
     expect(check.unchecked.length).toBeGreaterThan(0);
   });
 
-  it('cobre todas as tabelas que a fase 3 alterou', () => {
+  it('cobre todas as tabelas que as fases 3 e 4 alteraram', () => {
     expect(Object.keys(REQUIRED_COLUMNS).sort()).toEqual([
-      'audit_finding_evidence',
       'audit_findings',
+      'audit_finding_evidence',
+      'document_validations',
       'invoices',
       'organization_settings',
-    ]);
+    ].sort());
+  });
+
+  it('acusa a tabela inteira ausente quando a 0006 não foi aplicada, não apenas coluna', async () => {
+    // document_validations é criada do zero pela 0006: uma instalação que só
+    // aplicou até a 0005 não tem a tabela, e o erro do PostgREST para "tabela
+    // não existe" é diferente do erro de "coluna não existe".
+    const check = await checkSchema(fakeClientMissingTable('document_validations'));
+
+    expect(check.upToDate).toBe(false);
+    expect(check.missing.map((item) => item.table)).toContain('document_validations');
+    // Crucial: não pode cair em "unchecked", que soaria como banco em dia.
+    expect(check.unchecked.find((item) => item.table === 'document_validations')).toBeUndefined();
+
+    const aviso = describeSchemaCheck(check);
+    expect(aviso).toContain('document_validations');
+    expect(aviso).toContain('0006_fase4_validacao_tecnica.sql');
+  });
+
+  it('reconhece também o SQLSTATE de tabela ausente (42P01), não só o do PostgREST', async () => {
+    const check = await checkSchema(fakeClientMissingTable('document_validations', '42P01'));
+    expect(check.missing.map((item) => item.table)).toContain('document_validations');
   });
 });
 
@@ -122,6 +168,16 @@ describe('tradução do erro de gravação', () => {
     });
 
     expect(mensagem).toContain(OUTDATED_DATABASE_MESSAGE);
+  });
+
+  it('tabela inteira ausente também vira instrução, não repasse cru do PostgREST', () => {
+    const mensagem = describeWriteError('A gravação da conferência do documento', {
+      code: 'PGRST205',
+      message: "Could not find the table 'public.document_validations' in the schema cache",
+    });
+
+    expect(mensagem).toContain(OUTDATED_DATABASE_MESSAGE);
+    expect(mensagem).toContain('0006_fase4_validacao_tecnica.sql');
   });
 
   it('erro comum mantém a mensagem original com contexto', () => {

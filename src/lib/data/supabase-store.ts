@@ -24,6 +24,7 @@ import {
   type CfopRule,
   type Company,
   type CompanyRegimeHistory,
+  type DocumentValidation,
   type FieldConfirmation,
   type Organization,
   type OrganizationSettings,
@@ -35,6 +36,7 @@ import { describeWriteError } from './schema-check';
 import {
   toAudit,
   toCfopRule,
+  toDocumentValidation,
   toFieldConfirmation,
   toAuditFile,
   toComment,
@@ -54,6 +56,7 @@ import {
 import type {
   AuditFileInput,
   CfopRuleInput,
+  DocumentValidationInput,
   FieldConfirmationInput,
   AuditFilePatch,
   AuditInput,
@@ -784,6 +787,38 @@ export class SupabaseStore implements DataStore {
       .select()
       .single();
     return toRuleSetting(unwrap(result, 'Falha ao salvar configuração da regra'));
+  }
+
+  async listDocumentValidations(auditId: string): Promise<DocumentValidation[]> {
+    const result = await this.client
+      .from('document_validations')
+      .select('*')
+      .eq('organization_id', this.organizationId)
+      .eq('audit_id', auditId)
+      .order('access_key', { ascending: true });
+    return unwrap(result, 'Falha ao listar conferências de documentos').map(toDocumentValidation);
+  }
+
+  async upsertDocumentValidation(input: DocumentValidationInput): Promise<DocumentValidation> {
+    const result = await this.client
+      .from('document_validations')
+      .upsert(
+        {
+          organization_id: this.organizationId,
+          audit_id: input.auditId,
+          access_key: input.accessKey,
+          status: input.status,
+          note: input.note,
+          validated_by: input.validatedBy,
+          validated_at: new Date().toISOString(),
+        },
+        { onConflict: 'audit_id,access_key' },
+      )
+      .select()
+      .single();
+    if (result.error) throw new Error(describeWriteError('A gravação da conferência do documento', result.error));
+    if (result.data === null) throw new Error('A gravação da conferência do documento: nenhum registro retornado.');
+    return toDocumentValidation(result.data as Row);
   }
 
   async listFieldConfirmations(auditId: string): Promise<FieldConfirmation[]> {

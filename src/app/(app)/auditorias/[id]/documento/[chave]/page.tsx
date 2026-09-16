@@ -14,6 +14,8 @@ import { Card, CardBody, CardHeader } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState, Notice, PageHeader } from '@/components/ui/page';
 import { EmptyRow, TableWrapper, Td, Th, Tr } from '@/components/ui/table';
+import { C100DocumentInspector } from '@/components/domain/c100-document-inspector';
+import { DocumentValidationForm } from '@/components/domain/document-validation-form';
 import { cn } from '@/lib/ui/cn';
 
 export const dynamic = 'force-dynamic';
@@ -166,6 +168,13 @@ export default async function DocumentComparisonPage({
   const rows = buildRows(xml, sped);
   const divergences = rows.filter((row) => row.differs);
 
+  // A conferência manual é por chave de acesso: só faz sentido para documentos
+  // eletrônicos, que a têm.
+  const isKeyed = /^\d{44}$/.test(chave);
+  const currentValidation = isKeyed
+    ? (await store.listDocumentValidations(id)).find((entry) => entry.accessKey === chave) ?? null
+    : null;
+
   return (
     <>
       <PageHeader
@@ -301,6 +310,30 @@ export default async function DocumentComparisonPage({
               </div>
             )}
           </Card>
+
+          {sped?.origin.fileId && isKeyed ? (
+            <Card className="mt-4">
+              <CardHeader
+                title="Registro C100 no arquivo original"
+                description="A linha original do arquivo da EFD, com os registros C170/C190/C195/C197 vinculados a este documento, ao lado da leitura do sistema campo a campo."
+              />
+              <CardBody>
+                <C100DocumentInspector fileId={sped.origin.fileId} chave={chave} />
+              </CardBody>
+            </Card>
+          ) : null}
+
+          {isKeyed ? (
+            <Card className="mt-4">
+              <CardHeader
+                title="Conferência manual"
+                description="Registro formal da validação técnica do motor: o resultado da conferência, quem conferiu e quando. Não altera dado algum da auditoria."
+              />
+              <CardBody>
+                <DocumentValidationForm auditId={id} accessKey={chave} current={currentValidation} />
+              </CardBody>
+            </Card>
+          ) : null}
 
           <p className="mt-4 text-xs text-ink-muted">
             Precisa conferir a linha original?{' '}

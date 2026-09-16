@@ -97,6 +97,9 @@ export default async function AuditPage({
                 <LinkButton href={`/auditorias/${audit.id}/composicao`} variant="secondary">
                   Ver composição
                 </LinkButton>
+                <LinkButton href={`/auditorias/${audit.id}/validacao`} variant="secondary">
+                  Validação técnica
+                </LinkButton>
                 <LinkButton href={`/auditorias/${audit.id}/relatorio`} variant="primary">
                   Relatório
                 </LinkButton>

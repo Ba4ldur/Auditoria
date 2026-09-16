@@ -283,7 +283,13 @@ describe('log de leitura', () => {
 });
 
 describe('status de confiabilidade do arquivo', () => {
-  const clean = { warnings: [], errors: [], unsupportedRecords: [], unsupportedLayout: null };
+  const clean = {
+    warnings: [],
+    errors: [],
+    unsupportedRecords: [],
+    unsupportedLayout: null,
+    layoutVersion: null,
+  };
 
   it('classifica como validado quando não há nada a registrar', () => {
     const outcome = classifyReliability({

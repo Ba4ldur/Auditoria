@@ -1,0 +1,125 @@
+[
+  {
+    "size": 1000,
+    "stages": [
+      {
+        "stage": "parsing",
+        "ms": 479.9236189999999,
+        "heapDeltaMb": 6.4611358642578125
+      },
+      {
+        "stage": "normalização",
+        "ms": 3.266992000000073,
+        "heapDeltaMb": 1.78924560546875
+      },
+      {
+        "stage": "reconciliação",
+        "ms": 4.057679000000007,
+        "heapDeltaMb": 1.4012527465820312
+      },
+      {
+        "stage": "regras",
+        "ms": 13.666193000000021,
+        "heapDeltaMb": 3.577972412109375
+      },
+      {
+        "stage": "persistência (local, escrita)",
+        "ms": 58.799872999999934,
+        "heapDeltaMb": 10.185928344726562
+      },
+      {
+        "stage": "persistência (local, releitura)",
+        "ms": 1.2651720000001205,
+        "heapDeltaMb": 0.016693115234375
+      }
+    ],
+    "totalMs": 560.9795280000001,
+    "xmlBytes": 2301048,
+    "efdBytes": 414981,
+    "localStoreFileBytes": 5285804,
+    "node": "v22.22.2",
+    "timestamp": "2026-09-16T10:54:08.073Z"
+  },
+  {
+    "size": 10000,
+    "stages": [
+      {
+        "stage": "parsing",
+        "ms": 3852.8606260000006,
+        "heapDeltaMb": 54.17466735839844
+      },
+      {
+        "stage": "normalização",
+        "ms": 37.41870900000049,
+        "heapDeltaMb": 8.176559448242188
+      },
+      {
+        "stage": "reconciliação",
+        "ms": 38.9053100000001,
+        "heapDeltaMb": 5.163642883300781
+      },
+      {
+        "stage": "regras",
+        "ms": 72.57298999999966,
+        "heapDeltaMb": -0.6667327880859375
+      },
+      {
+        "stage": "persistência (local, escrita)",
+        "ms": 567.9974970000003,
+        "heapDeltaMb": -24.393646240234375
+      },
+      {
+        "stage": "persistência (local, releitura)",
+        "ms": 0.3910169999999198,
+        "heapDeltaMb": 0.01969146728515625
+      }
+    ],
+    "totalMs": 4570.146149000001,
+    "xmlBytes": 23010480,
+    "efdBytes": 4142207,
+    "localStoreFileBytes": 52759358,
+    "node": "v22.22.2",
+    "timestamp": "2026-09-16T10:54:12.852Z"
+  },
+  {
+    "size": 50000,
+    "stages": [
+      {
+        "stage": "parsing",
+        "ms": 19779.595505,
+        "heapDeltaMb": 281.53992462158203
+      },
+      {
+        "stage": "normalização",
+        "ms": 210.66925799999808,
+        "heapDeltaMb": 38.69517517089844
+      },
+      {
+        "stage": "reconciliação",
+        "ms": 251.62958000000071,
+        "heapDeltaMb": -45.220375061035156
+      },
+      {
+        "stage": "regras",
+        "ms": 376.31259099999806,
+        "heapDeltaMb": 27.031005859375
+      },
+      {
+        "stage": "persistência (local, escrita)",
+        "ms": 2755.666513,
+        "heapDeltaMb": -36.44902801513672
+      },
+      {
+        "stage": "persistência (local, releitura)",
+        "ms": 0.4001349999998638,
+        "heapDeltaMb": 0.01375579833984375
+      }
+    ],
+    "totalMs": 23374.273581999998,
+    "xmlBytes": 115052400,
+    "efdBytes": 20707649,
+    "localStoreFileBytes": 263859876,
+    "node": "v22.22.2",
+    "timestamp": "2026-09-16T10:54:37.101Z"
+  }
+]

@@ -2,7 +2,8 @@ import type { ReactNode } from 'react';
 import { cn } from '@/lib/ui/cn';
 import type { FindingStatus, ReviewStatus, Severity } from '@/lib/domain/entities';
 
-type Tone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'gold' | 'muted';
+export type BadgeTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'gold' | 'muted';
+type Tone = BadgeTone;
 
 const TONES: Record<Tone, string> = {
   neutral: 'bg-navy-50 text-navy-700 ring-navy-100',

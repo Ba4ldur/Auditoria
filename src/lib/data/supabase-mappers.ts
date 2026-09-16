@@ -18,6 +18,7 @@ import {
   type CfopRule,
   type Company,
   type CompanyRegimeHistory,
+  type DocumentValidation,
   type FieldConfirmation,
   type Organization,
   type OrganizationSettings,
@@ -330,6 +331,19 @@ export function toFieldConfirmation(row: Row): FieldConfirmation {
     confirmedBy: str(row, 'confirmed_by'),
     confirmedAt: str(row, 'confirmed_at'),
     note: nullableStr(row, 'note'),
+  };
+}
+
+export function toDocumentValidation(row: Row): DocumentValidation {
+  return {
+    id: str(row, 'id'),
+    organizationId: str(row, 'organization_id'),
+    auditId: str(row, 'audit_id'),
+    accessKey: str(row, 'access_key'),
+    status: str(row, 'status') as DocumentValidation['status'],
+    note: nullableStr(row, 'note'),
+    validatedBy: str(row, 'validated_by'),
+    validatedAt: str(row, 'validated_at'),
   };
 }
 

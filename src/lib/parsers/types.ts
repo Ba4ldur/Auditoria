@@ -38,6 +38,16 @@ export interface ParseLog {
   readonly unsupportedRecords: readonly { code: string; count: number }[];
   /** Preenchido quando o leiaute declarado não consta na lista verificada. */
   readonly unsupportedLayout: UnsupportedLayout | null;
+  /**
+   * Versão do leiaute declarada pelo arquivo (campo COD_VER do registro 0000
+   * de um SPED), sempre que o parser a identifica — verificada ou não.
+   *
+   * Distinto de `unsupportedLayout.declaredVersion`, que só é preenchido
+   * quando a versão NÃO consta na lista verificada: a tela de validação
+   * técnica precisa mostrar a versão do leiaute de todo arquivo, inclusive o
+   * caso comum de uma versão já verificada.
+   */
+  readonly layoutVersion: string | null;
 }
 
 export interface UnsupportedLayout {
@@ -51,6 +61,7 @@ export const EMPTY_PARSE_LOG: ParseLog = Object.freeze({
   errors: [],
   unsupportedRecords: [],
   unsupportedLayout: null,
+  layoutVersion: null,
 });
 
 export interface ParsedPayload {

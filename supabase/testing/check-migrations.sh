@@ -2,19 +2,24 @@
 #
 # Confere as migrações contra um PostgreSQL descartável.
 #
-# Prova quatro coisas, nesta ordem:
+# Prova cinco coisas, nesta ordem:
 #   1. a sequência completa aplica sem erro;
-#   2. reaplicar a última migração não tem efeito (idempotência);
-#   3. as colunas exigidas pela aplicação existem ao final;
-#   4. a reversão da última migração desfaz exatamente o que ela criou.
+#   2. reaplicar as duas últimas migrações não tem efeito (idempotência);
+#   3. as colunas e tabelas exigidas pela aplicação existem ao final;
+#   4. a reversão das duas últimas migrações desfaz exatamente o que criaram;
+#   5. a política de RLS de `document_validations` isola por organização —
+#      select, insert, update e delete — com um usuário real, não o
+#      superusuário usado para aplicar as migrações.
 #
 # Uso:  supabase/testing/check-migrations.sh
 # Requer: psql e um servidor acessível via PGHOST/PGPORT/PGUSER.
 #
 set -euo pipefail
 
-MIGRATIONS_DIR="$(cd "$(dirname "$0")/.." && pwd)/migrations"
-STUBS="$(cd "$(dirname "$0")" && pwd)/00_supabase_stubs.sql"
+TESTING_DIR="$(cd "$(dirname "$0")" && pwd)"
+MIGRATIONS_DIR="$(cd "$TESTING_DIR/.." && pwd)/migrations"
+STUBS="$TESTING_DIR/00_supabase_stubs.sql"
+RLS_CHECK="$TESTING_DIR/check-document-validations-rls.sql"
 DB="${ATTIVARE_TEST_DB:-attivare_migrations_check}"
 
 run() { psql -d "$DB" -v ON_ERROR_STOP=1 -q "$@"; }
@@ -33,8 +38,9 @@ for file in "$MIGRATIONS_DIR"/[0-9]*.sql; do
   run -f "$file"
 done
 
-echo "==> Reaplicando a última migração (idempotência)"
+echo "==> Reaplicando as duas últimas migrações (idempotência)"
 run -f "$MIGRATIONS_DIR/0005_fase3_xml_efd.sql"
+run -f "$MIGRATIONS_DIR/0006_fase4_validacao_tecnica.sql"
 
 echo "==> Conferindo as colunas exigidas pela aplicação"
 missing=$(psql -d "$DB" -tAc "
@@ -49,7 +55,10 @@ missing=$(psql -d "$DB" -tAc "
     ('invoices','purpose_code'),
     ('invoices','purpose_field'),
     ('invoices','reform_taxes'),
-    ('organization_settings','indicio_factor')
+    ('organization_settings','indicio_factor'),
+    ('document_validations','access_key'),
+    ('document_validations','status'),
+    ('document_validations','validated_by')
   )
   select t || '.' || c from required
   where not exists (
@@ -64,7 +73,8 @@ if [ -n "$missing" ]; then
 fi
 echo "    todas presentes"
 
-echo "==> Revertendo a 0005 e conferindo que as colunas somem"
+echo "==> Revertendo a 0006 e a 0005, conferindo que somem"
+run -f "$MIGRATIONS_DIR/0006_fase4_validacao_tecnica.down.sql"
 run -f "$MIGRATIONS_DIR/0005_fase3_xml_efd.down.sql"
 remaining=$(psql -d "$DB" -tAc "
   select count(*) from information_schema.columns
@@ -72,7 +82,8 @@ remaining=$(psql -d "$DB" -tAc "
     and (   (table_name='audit_finding_evidence' and column_name in ('record_code','line_number','field_name','parser_version'))
          or (table_name='audit_findings' and column_name='rule_version')
          or (table_name='invoices' and column_name in ('purpose','extemporaneous','purpose_code','purpose_field','reform_taxes'))
-         or (table_name='organization_settings' and column_name='indicio_factor'));")
+         or (table_name='organization_settings' and column_name='indicio_factor')
+         or (table_name='document_validations'));")
 
 if [ "$remaining" != "0" ]; then
   echo "FALHOU: a reversão deixou $remaining coluna(s) para trás."
@@ -80,8 +91,12 @@ if [ "$remaining" != "0" ]; then
 fi
 echo "    reversão completa"
 
-echo "==> Reaplicando a 0005 depois da reversão"
+echo "==> Reaplicando depois da reversão"
 run -f "$MIGRATIONS_DIR/0005_fase3_xml_efd.sql"
+run -f "$MIGRATIONS_DIR/0006_fase4_validacao_tecnica.sql"
+
+echo "==> Conferindo RLS de document_validations com um usuário real"
+run -f "$RLS_CHECK"
 
 echo
-echo "OK: migrações aplicam, são idempotentes, entregam o esquema exigido e revertem."
+echo "OK: migrações aplicam, são idempotentes, entregam o esquema exigido, revertem e a RLS de document_validations isola por organização."

@@ -363,6 +363,7 @@ async function parseEfdContribFile(input: ParserInput): Promise<Result<ParsedPay
       errors: messages.filter((message) => message.level === 'ERRO'),
       unsupportedRecords,
       unsupportedLayout,
+      layoutVersion: state.version,
     },
     identity: {
       ...EMPTY_IDENTITY,

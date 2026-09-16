@@ -24,6 +24,8 @@ import type {
   Company,
   CompanyRegimeHistory,
   ConformityBand,
+  DocumentValidation,
+  DocumentValidationStatus,
   FieldConfirmation,
   FileInspection,
   FileMessage,
@@ -146,6 +148,14 @@ export interface FieldConfirmationInput {
   readonly note: string | null;
 }
 
+export interface DocumentValidationInput {
+  readonly auditId: string;
+  readonly accessKey: string;
+  readonly status: DocumentValidationStatus;
+  readonly note: string | null;
+  readonly validatedBy: string;
+}
+
 export interface CfopRuleInput {
   readonly cfop: string;
   readonly description: string | null;
@@ -210,6 +220,9 @@ export interface DataStore {
 
   listRuleSettings(): Promise<RuleSetting[]>;
   upsertRuleSetting(input: RuleSettingInput): Promise<RuleSetting>;
+
+  listDocumentValidations(auditId: string): Promise<DocumentValidation[]>;
+  upsertDocumentValidation(input: DocumentValidationInput): Promise<DocumentValidation>;
 
   listFieldConfirmations(auditId: string): Promise<FieldConfirmation[]>;
   upsertFieldConfirmation(input: FieldConfirmationInput): Promise<FieldConfirmation>;

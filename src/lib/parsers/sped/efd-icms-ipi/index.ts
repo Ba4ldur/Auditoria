@@ -326,6 +326,7 @@ async function parseEfdIcmsFile(input: ParserInput): Promise<Result<ParsedPayloa
       errors: messages.filter((message) => message.level === 'ERRO'),
       unsupportedRecords,
       unsupportedLayout,
+      layoutVersion: state.version,
     },
     identity: {
       ...EMPTY_IDENTITY,

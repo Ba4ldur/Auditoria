@@ -136,6 +136,8 @@ export interface FileParseLog {
     readonly declaredVersion: string | null;
     readonly verifiedVersions: readonly string[];
   } | null;
+  /** Versão do leiaute declarada pelo arquivo (COD_VER), verificada ou não. */
+  readonly layoutVersion: string | null;
 }
 
 /** Resumo estrutural do arquivo, calculado no processamento. */
@@ -302,6 +304,58 @@ export interface AuditFinding {
   readonly reviewedAt: string | null;
   readonly createdAt: string;
   readonly updatedAt: string;
+}
+
+/**
+ * Resultado da conferência manual de um documento pelo contador (fase 4).
+ *
+ * A distinção entre os quatro estados é o que dá valor ao registro: dizer que
+ * "o sistema errou" sem separar erro de LEITURA de erro de CRUZAMENTO não
+ * orienta correção nenhuma. `PARSER_INCORRETO` aponta para o leitor do arquivo;
+ * `CRUZAMENTO_INCORRETO` aponta para a regra. São defeitos de naturezas
+ * diferentes, corrigidos em lugares diferentes.
+ */
+export type DocumentValidationStatus =
+  | 'CORRETO'
+  | 'PARSER_INCORRETO'
+  | 'CRUZAMENTO_INCORRETO'
+  | 'REQUER_ANALISE';
+
+export const DOCUMENT_VALIDATION_LABELS: Readonly<Record<DocumentValidationStatus, string>> = {
+  CORRETO: 'Correto',
+  PARSER_INCORRETO: 'Leitura do arquivo incorreta',
+  CRUZAMENTO_INCORRETO: 'Cruzamento incorreto',
+  REQUER_ANALISE: 'Requer análise',
+};
+
+export const DOCUMENT_VALIDATION_STATUSES = Object.keys(
+  DOCUMENT_VALIDATION_LABELS,
+) as DocumentValidationStatus[];
+
+/** Estados que indicam defeito do motor, e não da escrituração auditada. */
+export const ENGINE_DEFECT_STATUSES: readonly DocumentValidationStatus[] = [
+  'PARSER_INCORRETO',
+  'CRUZAMENTO_INCORRETO',
+];
+
+/**
+ * Conferência de um documento feita por uma pessoa durante a validação técnica.
+ *
+ * Não altera dado algum da auditoria: é o registro formal de que alguém
+ * habilitado olhou o documento, comparou a leitura do sistema com o arquivo
+ * original e se pronunciou. É esse registro que sustenta dizer, depois, que o
+ * motor foi validado — e por quem.
+ */
+export interface DocumentValidation {
+  readonly id: string;
+  readonly organizationId: string;
+  readonly auditId: string;
+  /** Chave de acesso do documento conferido. */
+  readonly accessKey: string;
+  readonly status: DocumentValidationStatus;
+  readonly note: string | null;
+  readonly validatedBy: string;
+  readonly validatedAt: string;
 }
 
 /**

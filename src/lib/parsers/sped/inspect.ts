@@ -251,6 +251,85 @@ export function readSpedLine(
 }
 
 // ---------------------------------------------------------------------------
+// Inspeção de um C100 com os registros filhos (validação técnica)
+// ---------------------------------------------------------------------------
+
+/** Registros que pertencem ao documento aberto pelo C100 imediatamente anterior. */
+export const C100_CHILD_CODES = ['C170', 'C190', 'C195', 'C197'] as const;
+
+export interface InspectedDocument {
+  /** O próprio C100, com a linha original e a leitura campo a campo. */
+  readonly document: InspectedRecord;
+  /** Filhos do documento, na ordem em que aparecem no arquivo. */
+  readonly children: readonly InspectedRecord[];
+  /** Contagem por código de registro filho, para conferência rápida. */
+  readonly childCounts: Readonly<Record<string, number>>;
+}
+
+/**
+ * Lê um C100 e tudo o que pertence a ele.
+ *
+ * O SPED não referencia o documento nos filhos: a vinculação é **posicional** —
+ * C170, C190, C195 e C197 pertencem ao último C100 lido. É por isso que a busca
+ * varre o arquivo do início, em vez de saltar direto para a linha pedida:
+ * saltar exigiria confiar em um vínculo que o formato não declara.
+ *
+ * `chave` localiza o documento pelo CHV_NFE; `linha` localiza pelo número da
+ * linha. Um dos dois é obrigatório.
+ */
+export function readC100Document(
+  content: string,
+  obligation: SpedObligation,
+  locator: { readonly chave?: string; readonly linha?: number },
+): InspectedDocument | null {
+  const catalogue = catalogueFor(obligation);
+  const childCodes = new Set<string>(C100_CHILD_CODES);
+  const wantedKey = locator.chave?.replace(/\D/g, '') ?? null;
+
+  const interpret = (record: { code: string; parts: readonly string[]; line: number }): InspectedRecord => {
+    const spec = catalogue.get(record.code);
+    return interpretRecord(
+      record.parts,
+      record.line,
+      record.code,
+      spec?.fields ?? genericFields(record.parts.length),
+    );
+  };
+
+  let current: InspectedRecord | null = null;
+  let children: InspectedRecord[] = [];
+  let matched = false;
+
+  for (const record of readSpedRecords(content)) {
+    if (record.code === 'C100') {
+      // O documento anterior terminou: se era o procurado, já está completo.
+      if (matched && current) return finishDocument(current, children);
+
+      const chave = (field(record, 9) ?? '').replace(/\D/g, '');
+      const hitByKey = wantedKey !== null && chave === wantedKey && chave !== '';
+      const hitByLine = locator.linha !== undefined && record.line === locator.linha;
+
+      current = hitByKey || hitByLine ? interpret(record) : null;
+      children = [];
+      matched = current !== null;
+      continue;
+    }
+
+    if (matched && childCodes.has(record.code)) children.push(interpret(record));
+  }
+
+  return matched && current ? finishDocument(current, children) : null;
+}
+
+function finishDocument(document: InspectedRecord, children: InspectedRecord[]): InspectedDocument {
+  const childCounts: Record<string, number> = {};
+  for (const child of children) {
+    childCounts[child.code] = (childCounts[child.code] ?? 0) + 1;
+  }
+  return { document, children, childCounts };
+}
+
+// ---------------------------------------------------------------------------
 // Diagnóstico do C100 (requisito 4)
 // ---------------------------------------------------------------------------
 

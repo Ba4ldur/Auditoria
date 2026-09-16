@@ -27,6 +27,7 @@ export function toFileParseLog(log: ParseLog): FileParseLog {
     errors: log.errors,
     unsupportedRecords: log.unsupportedRecords,
     unsupportedLayout: log.unsupportedLayout,
+    layoutVersion: log.layoutVersion,
   };
 }
 

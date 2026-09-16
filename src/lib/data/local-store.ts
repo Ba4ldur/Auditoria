@@ -25,6 +25,7 @@ import {
   type CfopRule,
   type Company,
   type CompanyRegimeHistory,
+  type DocumentValidation,
   type FieldConfirmation,
   type Organization,
   type OrganizationSettings,
@@ -34,6 +35,7 @@ import type { TaxRegime } from '@/lib/domain/model';
 import type {
   AuditFileInput,
   CfopRuleInput,
+  DocumentValidationInput,
   FieldConfirmationInput,
   AuditFilePatch,
   AuditInput,
@@ -62,6 +64,7 @@ interface Database {
   comments: AuditComment[];
   ruleSettings: RuleSetting[];
   fieldConfirmations: FieldConfirmation[];
+  documentValidations: DocumentValidation[];
   cfopRules: CfopRule[];
 }
 
@@ -95,6 +98,7 @@ function emptyDatabase(): Database {
     comments: [],
     ruleSettings: [],
     fieldConfirmations: [],
+    documentValidations: [],
     cfopRules: [],
   };
 }
@@ -514,6 +518,35 @@ export class LocalStore implements DataStore {
       if (index === -1) database.ruleSettings.push(setting);
       else database.ruleSettings[index] = setting;
       return setting;
+    });
+  }
+
+  async listDocumentValidations(auditId: string): Promise<DocumentValidation[]> {
+    return this.read((database) =>
+      database.documentValidations
+        .filter((entry) => entry.auditId === auditId)
+        .sort((a, b) => a.accessKey.localeCompare(b.accessKey)),
+    );
+  }
+
+  async upsertDocumentValidation(input: DocumentValidationInput): Promise<DocumentValidation> {
+    return this.mutate((database) => {
+      const index = database.documentValidations.findIndex(
+        (entry) => entry.auditId === input.auditId && entry.accessKey === input.accessKey,
+      );
+      const validation: DocumentValidation = {
+        id: database.documentValidations[index]?.id ?? newId(),
+        organizationId: database.organization.id,
+        auditId: input.auditId,
+        accessKey: input.accessKey,
+        status: input.status,
+        note: input.note,
+        validatedBy: input.validatedBy,
+        validatedAt: now(),
+      };
+      if (index === -1) database.documentValidations.push(validation);
+      else database.documentValidations[index] = validation;
+      return validation;
     });
   }
 
